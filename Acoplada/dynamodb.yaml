@@ -1,0 +1,23 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Tabla DynamoDB con clave compuesta (id + categoria)
+
+Resources:
+  TablaProductos:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: Productos
+      AttributeDefinitions:
+        - AttributeName: id
+          AttributeType: S
+        - AttributeName: categoria
+          AttributeType: S
+        - AttributeName: nombre
+          AttributeType: S
+        - AttributeName: cantidad
+          AttributeType: N
+      KeySchema:
+        - AttributeName: id
+          KeyType: HASH
+        - AttributeName: categoria
+          KeyType: RANGE
+      BillingMode: PAY_PER_REQUEST
