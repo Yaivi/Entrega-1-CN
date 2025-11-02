@@ -9,11 +9,7 @@ Resources:
       AttributeDefinitions:
         - AttributeName: id
           AttributeType: S
-        - AttributeName: Nombre
-          AttributeType: S
-        - AttributeName: fecha
-          AttributeType: S
-        - AttributeName: cantidad
+        - AttributeName: categoria
           AttributeType: S
       KeySchema:
         - AttributeName: id
@@ -21,3 +17,8 @@ Resources:
         - AttributeName: categoria
           KeyType: RANGE
       BillingMode: PAY_PER_REQUEST
+
+# Atributos esperados (no validados por DynamoDB)
+# - nombre (S)
+# - fecha (S)
+# - cantidad (S)

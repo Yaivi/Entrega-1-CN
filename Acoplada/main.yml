@@ -88,12 +88,6 @@ Resources:
     Properties:
       ClusterName: my-app-cluster
 
-  AppLogGroup:
-    Type: AWS::Logs::LogGroup
-    Properties:
-      LogGroupName: /ecs/my-app
-      RetentionInDays: 7
-
   # Definición del contenedor con las tareas a ejecutar, con los recursos CPU y Memoria necesarios
   MyECSTask:
     Type: AWS::ECS::TaskDefinition
@@ -197,29 +191,6 @@ Resources:
         - ContainerName: my-app-container
           ContainerPort: 80
           TargetGroupArn: !Ref AppTargetGroup
-
-  ServiceAutoScalingTarget:
-    Type: AWS::ApplicationAutoScaling::ScalableTarget
-    Properties:
-      MaxCapacity: !Ref MaxCapacity
-      MinCapacity: !Ref MinCapacity
-      ResourceId: !Sub service/${MyECSCluster}/${MyECSService.Name}
-      RoleARN: arn:aws:iam::aws:policy/service-role/AmazonEC2ContainerServiceAutoscaleRole
-      ScalableDimension: ecs:service:DesiredCount
-      ServiceNamespace: ecs
-
-  ServiceAutoScalingPolicy:
-    Type: AWS::ApplicationAutoScaling::ScalingPolicy
-    Properties:
-      PolicyName: my-app-scaling-policy
-      PolicyType: TargetTrackingScaling
-      ScalingTargetId: !Ref ServiceAutoScalingTarget
-      TargetTrackingScalingPolicyConfiguration:
-        TargetValue: 50.0
-        PredefinedMetricSpecification:
-          PredefinedMetricType: ECSServiceAverageCPUUtilization
-        ScaleInCooldown: 60
-        ScaleOutCooldown: 60
 
   MyApi:
     Type: AWS::ApiGateway::RestApi
