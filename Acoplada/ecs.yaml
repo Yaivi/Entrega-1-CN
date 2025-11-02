@@ -1,0 +1,346 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Despliegue mínimo de aplicación CRUD con ECS, Docker y DynamoDB
+Parameters:
+  ImageUri:
+    Type: String
+    Description: URI de la imagen Docker (por ejemplo: 123456789012.dkr.ecr.us-east-1.amazonaws.com/my-app:latest)
+
+  VpcId:
+    Type: String
+    Description: ID de la VPC existente
+
+  PublicSubnets:
+    Type: List<AWS::EC2::Subnet::Id>
+    Description: Subnets públicas para el balanceador
+
+  PrivateSubnets:
+    Type: List<AWS::EC2::Subnet::Id>
+    Description: Subnets privadas para las tareas ECS
+
+  ContainerPort:
+    Type: Number
+    Default: 80
+    Description: Puerto del contenedor
+
+  DesiredCount:
+    Type: Number
+    Default: 1
+    Description: Número de tareas iniciales
+
+  MinCapacity:
+    Type: Number
+    Default: 1
+    Description: Número mínimo de tareas ECS
+
+  MaxCapacity:
+    Type: Number
+    Default: 3
+    Description: Número máximo de tareas ECS
+
+  DynamoTableName:
+    Type: String
+    Default: my-app-table
+    Description: Nombre de la tabla DynamoDB
+
+Resources:
+  # Rol de ejecución de la tarea ECS (permite logs y descarga de imágenes)
+  ECSTaskExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+
+  # Rol para que el contenedor acceda a DynamoDB
+  ECSTaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: DynamoAccess
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:PutItem
+                  - dynamodb:GetItem
+                  - dynamodb:Scan
+                  - dynamodb:UpdateItem
+                  - dynamodb:DeleteItem
+                Resource: "*"
+
+  # ECS Cluster, será el contenedor lógico que voy usar donde se ejecutarán las tareas con Docker
+  MyECSCluster:
+    Type: AWS::ECS::Cluster
+    Properties:
+      ClusterName: my-app-cluster
+
+  AppLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /ecs/my-app
+      RetentionInDays: 7
+
+  # Definición del contenedor con las tareas a ejecutar, con los recursos CPU y Memoria necesarios
+  MyECSTask:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: my-app-task
+      Cpu: '256' #obligatorio para Fargate
+      Memory: '512' #obligatorio para Fargate
+      NetworkMode: awsvpc #obligatorio para Fargate solo puede ser awsvpc
+      RequiresCompatibilities: #Necesario para decirle que vas a usar Fargate
+        - FARGATE
+      ContainerDefinitions:
+        - Name: my-app-container
+          Image: <TU_REPOSITORIO_DOCKER> 
+          PortMappings:
+            - ContainerPort: 80
+          Environment:
+            - Name: DYNAMO_TABLE
+              Value: <NOMBRE_DE_TU_TABLA>
+            - Name: AWS_REGION
+              Value: us-east-1
+
+  # Security Group Necesario para el funcionamiento de la VPC que va a usar Fargate
+  MyAppSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Permite acceso a ECS
+      VpcId: <VPC_ID> # Necesario si tu ECS está en VPC existente
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+
+  ALBSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Permite tráfico HTTP desde Internet
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+
+  TaskSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Permite tráfico solo desde el ALB hacia las tareas
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: !Ref ContainerPort
+          ToPort: !Ref ContainerPort
+          SourceSecurityGroupId: !Ref ALBSecurityGroup
+
+  AppLoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: my-app-alb
+      Scheme: internet-facing
+      SecurityGroups:
+        - !Ref ALBSecurityGroup
+      Subnets: !Ref PublicSubnets
+
+  AppTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: my-app-tg
+      Port: !Ref ContainerPort
+      Protocol: HTTP
+      TargetType: ip
+      VpcId: !Ref VpcId
+      HealthCheckPath: /health
+
+  AppListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref AppLoadBalancer
+      Port: 80
+      Protocol: HTTP
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref AppTargetGroup
+
+  # ECS Service
+    MyECSService:
+    Type: AWS::ECS::Service
+    Properties:
+      Cluster: !Ref MyECSCluster
+      ServiceName: my-app-service
+      LaunchType: FARGATE
+      DesiredCount: 1
+      TaskDefinition: !Ref MyECSTask
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: ENABLED
+          SecurityGroups:
+            - !Ref TaskSecurityGroup
+          Subnets: !Ref PrivateSubnets
+      LoadBalancers:
+        - ContainerName: my-app-container
+          ContainerPort: 80
+          TargetGroupArn: !Ref AppTargetGroup
+
+  ServiceAutoScalingTarget:
+    Type: AWS::ApplicationAutoScaling::ScalableTarget
+    Properties:
+      MaxCapacity: !Ref MaxCapacity
+      MinCapacity: !Ref MinCapacity
+      ResourceId: !Sub service/${MyECSCluster}/${MyECSService.Name}
+      RoleARN: arn:aws:iam::aws:policy/service-role/AmazonEC2ContainerServiceAutoscaleRole
+      ScalableDimension: ecs:service:DesiredCount
+      ServiceNamespace: ecs
+
+  ServiceAutoScalingPolicy:
+    Type: AWS::ApplicationAutoScaling::ScalingPolicy
+    Properties:
+      PolicyName: my-app-scaling-policy
+      PolicyType: TargetTrackingScaling
+      ScalingTargetId: !Ref ServiceAutoScalingTarget
+      TargetTrackingScalingPolicyConfiguration:
+        TargetValue: 50.0
+        PredefinedMetricSpecification:
+          PredefinedMetricType: ECSServiceAverageCPUUtilization
+        ScaleInCooldown: 60
+        ScaleOutCooldown: 60
+
+  MyApi:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      Name: MyAppAPI
+      Description: API CRUD para items en DynamoDB
+
+  ItemsResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref MyApi
+      ParentId: !GetAtt MyApi.RootResourceId
+      PathPart: items
+
+  ItemResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref MyApi
+      ParentId: !Ref ItemsResource
+      PathPart: "{id}"
+
+  # POST /items
+  PostItem:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref MyApi
+      ResourceId: !Ref ItemsResource
+      HttpMethod: POST
+      AuthorizationType: NONE
+      Integration:
+        Type: HTTP_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub "http://${AppLoadBalancer.DNSName}/items"
+
+  # GET /items
+  GetItems:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref MyApi
+      ResourceId: !Ref ItemsResource
+      HttpMethod: GET
+      AuthorizationType: NONE
+      Integration:
+        Type: HTTP_PROXY
+        IntegrationHttpMethod: GET
+        Uri: !Sub "http://${AppLoadBalancer.DNSName}/items"
+
+  # GET /items/{id}
+  GetItem:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref MyApi
+      ResourceId: !Ref ItemResource
+      HttpMethod: GET
+      AuthorizationType: NONE
+      RequestParameters:
+        method.request.path.id: true
+      Integration:
+        Type: HTTP_PROXY
+        IntegrationHttpMethod: GET
+        Uri: !Sub "http://${AppLoadBalancer.DNSName}/items/{id}"
+        RequestParameters:
+          integration.request.path.id: method.request.path.id
+
+  # PUT /items/{id}
+  PutItem:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref MyApi
+      ResourceId: !Ref ItemResource
+      HttpMethod: PUT
+      AuthorizationType: NONE
+      RequestParameters:
+        method.request.path.id: true
+      Integration:
+        Type: HTTP_PROXY
+        IntegrationHttpMethod: PUT
+        Uri: !Sub "http://${AppLoadBalancer.DNSName}/items/{id}"
+        RequestParameters:
+          integration.request.path.id: method.request.path.id
+
+  # DELETE /items/{id}
+  DeleteItem:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref MyApi
+      ResourceId: !Ref ItemResource
+      HttpMethod: DELETE
+      AuthorizationType: NONE
+      RequestParameters:
+        method.request.path.id: true
+      Integration:
+        Type: HTTP_PROXY
+        IntegrationHttpMethod: DELETE
+        Uri: !Sub "http://${AppLoadBalancer.DNSName}/items/{id}"
+        RequestParameters:
+          integration.request.path.id: method.request.path.id
+
+  ApiDeployment:
+    Type: AWS::ApiGateway::Deployment
+    DependsOn:
+      - PostItem
+      - GetItems
+      - GetItem
+      - PutItem
+      - DeleteItem
+    Properties:
+      RestApiId: !Ref MyApi
+
+  ApiStage:
+    Type: AWS::ApiGateway::Stage
+    Properties:
+      RestApiId: !Ref MyApi
+      DeploymentId: !Ref ApiDeployment
+      StageName: prod
+
+Outputs:
+  LoadBalancerDNS:
+    Description: DNS del Application Load Balancer
+    Value: !GetAtt AppLoadBalancer.DNSName
+
+  ApiUrl:
+    Description: URL base del API Gateway
+    Value: !Sub "https://${MyApi}.execute-api.${AWS::Region}.amazonaws.com/prod"

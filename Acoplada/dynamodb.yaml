@@ -1,20 +1,20 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: Tabla DynamoDB con clave compuesta (id + categoria)
+Description: Tabla mínima de DynamoDB con tres atributos
 
 Resources:
-  TablaProductos:
+  MiTablaDynamoDB:
     Type: AWS::DynamoDB::Table
     Properties:
-      TableName: Productos
+      TableName: MiTablaEjemplo
       AttributeDefinitions:
         - AttributeName: id
           AttributeType: S
-        - AttributeName: categoria
+        - AttributeName: Nombre
           AttributeType: S
-        - AttributeName: nombre
+        - AttributeName: fecha
           AttributeType: S
         - AttributeName: cantidad
-          AttributeType: N
+          AttributeType: S
       KeySchema:
         - AttributeName: id
           KeyType: HASH
