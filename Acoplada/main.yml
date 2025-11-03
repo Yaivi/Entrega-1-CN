@@ -1,9 +1,10 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Description: Despliegue mínimo de aplicación CRUD con ECS, Docker y DynamoDB
+
 Parameters:
   ImageUri:
     Type: String
-    Description: URI de la imagen Docker (por ejemplo: 123456789012.dkr.ecr.us-east-1.amazonaws.com/my-app:latest)
+    Description: URI de la imagen Docker en ECR (ej. 123456789012.dkr.ecr.us-east-1.amazonaws.com/my-app:latest)
 
   VpcId:
     Type: String
@@ -11,7 +12,7 @@ Parameters:
 
   PublicSubnets:
     Type: List<AWS::EC2::Subnet::Id>
-    Description: Subnets públicas para el balanceador
+    Description: Subnets públicas para el Load Balancer
 
   PrivateSubnets:
     Type: List<AWS::EC2::Subnet::Id>
@@ -21,29 +22,16 @@ Parameters:
     Type: Number
     Default: 80
     Description: Puerto del contenedor
-
-  DesiredCount:
-    Type: Number
-    Default: 1
-    Description: Número de tareas iniciales
-
-  MinCapacity:
-    Type: Number
-    Default: 1
-    Description: Número mínimo de tareas ECS
-
-  MaxCapacity:
-    Type: Number
-    Default: 3
-    Description: Número máximo de tareas ECS
-
+  
   DynamoTableName:
     Type: String
     Default: my-app-table
-    Description: Nombre de la tabla DynamoDB
+    Description: Nombre de la tabla DynamoDB que usará la aplicación
 
 Resources:
-  # Rol de ejecución de la tarea ECS (permite logs y descarga de imágenes)
+  # IAM Roles
+
+  # Rol para ejecutar tareas ECS (obligatorio para Fargate)
   ECSTaskExecutionRole:
     Type: AWS::IAM::Role
     Properties:
@@ -57,7 +45,7 @@ Resources:
       ManagedPolicyArns:
         - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
 
-  # Rol para que el contenedor acceda a DynamoDB
+  # Rol para que la tarea ECS acceda a DynamoDB (opcional si no usa DB)
   ECSTaskRole:
     Type: AWS::IAM::Role
     Properties:
@@ -82,13 +70,12 @@ Resources:
                   - dynamodb:DeleteItem
                 Resource: "*"
 
-  # ECS Cluster, será el contenedor lógico que voy usar donde se ejecutarán las tareas con Docker
+  # Cluster ECS (obligatorio)
   MyECSCluster:
     Type: AWS::ECS::Cluster
     Properties:
       ClusterName: my-app-cluster
-
-  # Definición del contenedor con las tareas a ejecutar, con los recursos CPU y Memoria necesarios
+# Definición del contenedor con las tareas a ejecutar, con los recursos CPU y Memoria necesarios
   MyECSTask:
     Type: AWS::ECS::TaskDefinition
     Properties:
@@ -102,29 +89,18 @@ Resources:
         - Name: my-app-container
           Image: <TU_REPOSITORIO_DOCKER> 
           PortMappings:
-            - ContainerPort: 80
+            - ContainerPort: !Ref ContainerPort
           Environment:
             - Name: DYNAMO_TABLE
               Value: <NOMBRE_DE_TU_TABLA>
             - Name: AWS_REGION
               Value: us-east-1
 
-  # Security Group Necesario para el funcionamiento de la VPC que va a usar Fargate
-  MyAppSecurityGroup:
+ # SG para el ALB (obligatorio si es internet-facing)
+  LoadBalancerSG:
     Type: AWS::EC2::SecurityGroup
     Properties:
-      GroupDescription: Permite acceso a ECS
-      VpcId: <VPC_ID> # Necesario si tu ECS está en VPC existente
-      SecurityGroupIngress:
-        - IpProtocol: tcp
-          FromPort: 80
-          ToPort: 80
-          CidrIp: 0.0.0.0/0
-
-  ALBSecurityGroup:
-    Type: AWS::EC2::SecurityGroup
-    Properties:
-      GroupDescription: Permite tráfico HTTP desde Internet
+      GroupDescription: Permite tráfico HTTP desde Internet al ALB
       VpcId: !Ref VpcId
       SecurityGroupIngress:
         - IpProtocol: tcp
@@ -132,72 +108,76 @@ Resources:
           ToPort: 80
           CidrIp: 0.0.0.0/0
 
-  TaskSecurityGroup:
+  # SG para ECS Tasks (obligatorio para controlar acceso)
+  TaskSG:
     Type: AWS::EC2::SecurityGroup
     Properties:
-      GroupDescription: Permite tráfico solo desde el ALB hacia las tareas
+      GroupDescription: Permite tráfico solo desde el ALB
       VpcId: !Ref VpcId
       SecurityGroupIngress:
         - IpProtocol: tcp
           FromPort: !Ref ContainerPort
           ToPort: !Ref ContainerPort
-          SourceSecurityGroupId: !Ref ALBSecurityGroup
+          SourceSecurityGroupId: !Ref LoadBalancerSG
 
+  # Application Load Balancer
   AppLoadBalancer:
     Type: AWS::ElasticLoadBalancingV2::LoadBalancer
     Properties:
       Name: my-app-alb
-      Scheme: internet-facing
+      Scheme: internet-facing #hace que sea accesible desde internet
+      Subnets: !Ref PublicSubnets #OBLIGATORIO: donde se despliega el LB
       SecurityGroups:
-        - !Ref ALBSecurityGroup
-      Subnets: !Ref PublicSubnets
+        - !Ref LoadBalancerSG
 
+  # Target Group para ECS
   AppTargetGroup:
     Type: AWS::ElasticLoadBalancingV2::TargetGroup
     Properties:
-      Name: my-app-tg
+      Name: my-app-tg #si no se pone AWS genera el nombre por su cuaneta
       Port: !Ref ContainerPort
       Protocol: HTTP
-      TargetType: ip
+      TargetType: ip #es necesario para usar Fargate
       VpcId: !Ref VpcId
-      HealthCheckPath: /health
+      HealthCheckPath: /health #opcional pero recomendable
 
+  # Listener del Load Balancer
   AppListener:
     Type: AWS::ElasticLoadBalancingV2::Listener
     Properties:
-      LoadBalancerArn: !Ref AppLoadBalancer
-      Port: 80
-      Protocol: HTTP
-      DefaultActions:
+      LoadBalancerArn: !Ref AppLoadBalancer #OBLIGATORIO
+      Port: 80                              #OBLIGATORIO
+      Protocol: HTTP                        #OBLIGATORIO
+      DefaultActions: #DEFINE QUE HACER CON EL TRÁFICO
         - Type: forward
           TargetGroupArn: !Ref AppTargetGroup
 
-  # ECS Service
-    MyECSService:
+  MyECSService:
     Type: AWS::ECS::Service
     Properties:
-      Cluster: !Ref MyECSCluster
-      ServiceName: my-app-service
-      LaunchType: FARGATE
-      DesiredCount: 1
-      TaskDefinition: !Ref MyECSTask
-      NetworkConfiguration:
+      Cluster: !Ref MyECSCluster                # OBLIGATORIO Cluster donde correrán las tareas
+      ServiceName: my-app-service               # OPCIONAL puedes dejar que AWS genere un nombre
+      LaunchType: FARGATE                       # OBLIGATORIO tipo de ejecución
+      DesiredCount: 1                           # OBLIGATORIO número inicial de tareas
+      TaskDefinition: !Ref MyECSTask            # OBLIGATORIO la Task Definition que correrá
+      NetworkConfiguration:                     # OBLIGATORIO para Fargate
         AwsvpcConfiguration:
-          AssignPublicIp: ENABLED
+          AssignPublicIp: DISABLED             # OPCIONAL DISABLED si estás en subnets privadas
           SecurityGroups:
-            - !Ref TaskSecurityGroup
-          Subnets: !Ref PrivateSubnets
-      LoadBalancers:
+            - !Ref TaskSG                       # OBLIGATORIO SG que controla acceso a la tarea
+          Subnets: !Ref PrivateSubnets          # OBLIGATORIO subnets donde correrán las tareas
+      LoadBalancers:                             # OPCIONAL pero necesario si quieres exponer la tarea via ALB
         - ContainerName: my-app-container
-          ContainerPort: 80
+          ContainerPort: !Ref ContainerPort
           TargetGroupArn: !Ref AppTargetGroup
 
   MyApi:
-    Type: AWS::ApiGateway::RestApi
-    Properties:
-      Name: MyAppAPI
-      Description: API CRUD para items en DynamoDB
-
+      Type: AWS::ApiGateway::RestApi
+      Properties:
+        Name: MyAppAPI
+        Description: API CRUD para items en DynamoDB
+  
+  #PARA DEFINIR LAS RUTAS /items y /items/{id}
   ItemsResource:
     Type: AWS::ApiGateway::Resource
     Properties:
