@@ -1,0 +1,259 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Despliegue CRUD ECS + Docker + DynamoDB con NLB + API Gateway + VPCLink + CORS
+
+Parameters:
+  ImageUri:
+    Type: String
+    Description: URI de la imagen Docker en ECR
+  VpcId:
+    Type: String
+    Description: ID de la VPC existente
+  PublicSubnets:
+    Type: List<AWS::EC2::Subnet::Id>
+    Description: Subnets públicas para el NLB
+  PrivateSubnets:
+    Type: List<AWS::EC2::Subnet::Id>
+    Description: Subnets privadas para ECS
+  ContainerPort:
+    Type: Number
+    Default: 80
+  DynamoTableName:
+    Type: String
+    Default: my-app-table
+
+Resources:
+
+  ######################
+  # IAM Roles
+  ######################
+  ECSTaskExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+
+  ECSTaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: DynamoAccess
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:PutItem
+                  - dynamodb:GetItem
+                  - dynamodb:Scan
+                  - dynamodb:UpdateItem
+                  - dynamodb:DeleteItem
+                Resource: "*"
+
+  ######################
+  # ECS Cluster y Task
+  ######################
+  MyECSCluster:
+    Type: AWS::ECS::Cluster
+
+  MyECSTask:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: my-app-task
+      Cpu: '256'
+      Memory: '512'
+      NetworkMode: awsvpc
+      RequiresCompatibilities:
+        - FARGATE
+      ExecutionRoleArn: !GetAtt ECSTaskExecutionRole.Arn
+      TaskRoleArn: !GetAtt ECSTaskRole.Arn
+      ContainerDefinitions:
+        - Name: my-app-container
+          Image: !Ref ImageUri
+          PortMappings:
+            - ContainerPort: !Ref ContainerPort
+          Environment:
+            - Name: DYNAMO_TABLE
+              Value: !Ref DynamoTableName
+            - Name: AWS_REGION
+              Value: !Ref "AWS::Region"
+
+  ######################
+  # Security Groups
+  ######################
+  TaskSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Permite tráfico solo desde NLB
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: !Ref ContainerPort
+          ToPort: !Ref ContainerPort
+          SourceSecurityGroupId: !Ref NLBSG
+
+  NLBSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Permite tráfico al NLB
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: !Ref ContainerPort
+          ToPort: !Ref ContainerPort
+          CidrIp: 0.0.0.0/0
+
+  ######################
+  # Network Load Balancer
+  ######################
+  MyNLB:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: my-app-nlb
+      Scheme: internet-facing
+      Type: network
+      Subnets: !Ref PublicSubnets
+      SecurityGroups:
+        - !Ref NLBSG
+
+  MyTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: my-app-tg
+      Port: !Ref ContainerPort
+      Protocol: TCP
+      TargetType: ip
+      VpcId: !Ref VpcId
+
+  MyListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref MyNLB
+      Port: !Ref ContainerPort
+      Protocol: TCP
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref MyTargetGroup
+
+  ######################
+  # ECS Service
+  ######################
+  MyECSService:
+    Type: AWS::ECS::Service
+    Properties:
+      Cluster: !Ref MyECSCluster
+      LaunchType: FARGATE
+      DesiredCount: 1
+      TaskDefinition: !Ref MyECSTask
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: ENABLED
+          SecurityGroups:
+            - !Ref TaskSG
+          Subnets: !Ref PrivateSubnets
+      LoadBalancers:
+        - ContainerName: my-app-container
+          ContainerPort: !Ref ContainerPort
+          TargetGroupArn: !Ref MyTargetGroup
+
+  ######################
+  # API Gateway + VPCLink
+  ######################
+  MyVpcLink:
+    Type: AWS::ApiGateway::VpcLink
+    Properties:
+      Name: MyVpcLinkToNLB
+      TargetArns:
+        - !Ref MyNLB
+
+  MyApi:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      Name: MyAppAPI
+      Description: API CRUD con NLB
+      EndpointConfiguration:
+        Types:
+          - REGIONAL
+
+  ItemsResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref MyApi
+      ParentId: !GetAtt MyApi.RootResourceId
+      PathPart: items
+
+  ItemResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref MyApi
+      ParentId: !Ref ItemsResource
+      PathPart: "{id}"
+
+  # POST /items con CORS
+  PostItem:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref MyApi
+      ResourceId: !Ref ItemsResource
+      HttpMethod: POST
+      AuthorizationType: NONE
+      Integration:
+        Type: HTTP_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub "http://${MyNLB.DNSName}/items"
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Origin: true
+
+  # GET /items con CORS
+  GetItems:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref MyApi
+      ResourceId: !Ref ItemsResource
+      HttpMethod: GET
+      AuthorizationType: NONE
+      Integration:
+        Type: HTTP_PROXY
+        IntegrationHttpMethod: GET
+        Uri: !Sub "http://${MyNLB.DNSName}/items"
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Origin: true
+
+  # Deployment y Stage
+  ApiDeployment:
+    Type: AWS::ApiGateway::Deployment
+    DependsOn:
+      - PostItem
+      - GetItems
+    Properties:
+      RestApiId: !Ref MyApi
+
+  ApiStage:
+    Type: AWS::ApiGateway::Stage
+    Properties:
+      RestApiId: !Ref MyApi
+      DeploymentId: !Ref ApiDeployment
+      StageName: prod
+
+Outputs:
+  NlbDNS:
+    Value: !GetAtt MyNLB.DNSName
+  ApiUrl:
+    Value: !Sub "https://${MyApi}.execute-api.${AWS::Region}.amazonaws.com/prod"

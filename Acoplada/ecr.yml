@@ -1,0 +1,42 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Repositorio ECR para la aplicación CRUD con ECS y DynamoDB
+
+Parameters:
+  RepositoryName:
+    Type: String
+    Default: my-app
+    Description: Nombre del repositorio ECR
+
+Resources:
+  # Repositorio ECR principal
+  MyAppECRRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: !Ref RepositoryName  # Opcional: puedes dejar que AWS genere el nombre
+      ImageScanningConfiguration:
+        ScanOnPush: false                   # Activa escaneo de vulnerabilidades cada vez que subes una imagen
+      LifecyclePolicy:                     # Limpieza automática de imágenes antiguas
+        LifecyclePolicyText: |
+          {
+            "rules": [
+              {
+                "rulePriority": 1,
+                "description": "Eliminar imágenes antiguas, dejar solo las 5 más recientes",
+                "selection": {
+                  "tagStatus": "any",
+                  "countType": "imageCountMoreThan",
+                  "countNumber": 2
+                },
+                "action": { "type": "expire" }
+              }
+            ]
+          }
+
+Outputs:
+  RepositoryUri:
+    Description: URI del repositorio ECR (para usar en ECS Task Definition)
+    Value: !GetAtt MyAppECRRepository.RepositoryUri
+
+  RepositoryName:
+    Description: Nombre del repositorio
+    Value: !Ref MyAppECRRepository

@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Frontend CRUD - MiTablaDynamoDB</title>
+  <style>
+    :root{font-family:Inter, ui-sans-serif, system-ui, -apple-system,Segoe UI, Roboto, "Helvetica Neue", Arial;}
+    body{max-width:1100px;margin:24px auto;font-size:15px;color:#111}
+    header{display:flex;align-items:center;gap:16px;margin-bottom:12px}
+    h1{font-size:20px;margin:0}
+    .card{border:1px solid #e6e6e6;border-radius:8px;padding:12px;margin:8px 0;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,0.03)}
+    label{display:block;font-size:13px;margin:6px 0}
+    input[type=text], input[type=url]{width:100%;padding:8px;border:1px solid #ccc;border-radius:6px}
+    button{padding:8px 12px;border-radius:6px;border:none;background:#0b74de;color:#fff;cursor:pointer;margin-right:8px}
+    button.secondary{background:#666}
+    pre{background:#f7f7f7;padding:8px;border-radius:6px;overflow:auto;max-height:260px}
+    .grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+    .full{grid-column:1/-1}
+    .note{font-size:13px;color:#555}
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Frontend CRUD - MiTablaDynamoDB</h1>
+    <div class="note">Prueba los endpoints: POST /items, GET /items, GET /items/{id}/{categoria}, PUT /items/{id}/{categoria}, DELETE /items/{id}/{categoria}</div>
+  </header>
+
+  <section class="card">
+    <strong>Configuración</strong>
+    <label>Base URL de la API (por ejemplo: <code>https://mi-api.execute-api.region.amazonaws.com/prod</code>)</label>
+    <input id="baseUrl" type="url" placeholder="https://..." value="" />
+  </section>
+
+  <div class="grid">
+    <!-- Crear -->
+    <section class="card">
+      <strong>Crear elemento (POST /items)</strong>
+      <label>ID</label><input id="create_id" type="text" placeholder="Ej: 123" />
+      <label>Categoría</label><input id="create_categoria" type="text" placeholder="Ej: ropa" />
+      <label>Nombre</label><input id="create_nombre" type="text" placeholder="Ej: Camiseta roja" />
+      <label>Fecha</label><input id="create_fecha" type="text" placeholder="Ej: 2025-11-03" />
+      <label>Cantidad</label><input id="create_cantidad" type="text" placeholder="Ej: 10" />
+      <div><button id="btnCreate">Crear</button><button class="secondary" id="btnCreateClear">Borrar campos</button></div>
+    </section>
+
+    <!-- Obtener por ID + Categoria -->
+    <section class="card">
+      <strong>Obtener por ID y Categoría (GET /items/{id}/{categoria})</strong>
+      <label>ID</label><input id="read_id" type="text" placeholder="Ej: 123" />
+      <label>Categoría</label><input id="read_categoria" type="text" placeholder="Ej: ropa" />
+      <div><button id="btnRead">Obtener</button><button class="secondary" id="btnReadClear">Limpiar</button></div>
+    </section>
+
+    <!-- Obtener todos -->
+    <section class="card">
+      <strong>Obtener todos (GET /items)</strong>
+      <div><button id="btnReadAll">Obtener todos</button><button class="secondary" id="btnReadAllClear">Limpiar salida</button></div>
+    </section>
+
+    <!-- Actualizar -->
+    <section class="card">
+      <strong>Actualizar elemento (PUT /items/{id}/{categoria})</strong>
+      <label>ID</label><input id="update_id" type="text" placeholder="Ej: 123" />
+      <label>Categoría</label><input id="update_categoria" type="text" placeholder="Ej: ropa" />
+      <label>Nombre</label><input id="update_nombre" type="text" placeholder="Nuevo nombre" />
+      <label>Fecha</label><input id="update_fecha" type="text" placeholder="Nueva fecha" />
+      <label>Cantidad</label><input id="update_cantidad" type="text" placeholder="Nueva cantidad" />
+      <div><button id="btnUpdate">Actualizar</button><button class="secondary" id="btnUpdateClear">Limpiar</button></div>
+    </section>
+
+    <!-- Eliminar -->
+    <section class="card">
+      <strong>Eliminar elemento (DELETE /items/{id}/{categoria})</strong>
+      <label>ID</label><input id="delete_id" type="text" placeholder="Ej: 123" />
+      <label>Categoría</label><input id="delete_categoria" type="text" placeholder="Ej: ropa" />
+      <div><button id="btnDelete">Eliminar</button><button class="secondary" id="btnDeleteClear">Limpiar</button></div>
+    </section>
+
+    <!-- Salida -->
+    <section class="card full">
+      <strong>Salida / Respuestas</strong>
+      <pre id="output">Aquí aparecerán las respuestas de la API (JSON).</pre>
+    </section>
+  </div>
+
+  <script>
+    const $ = id => document.getElementById(id);
+    function showOutput(obj){ $('output').textContent = JSON.stringify(obj, null, 2); }
+    function baseApi(){ return $('baseUrl').value.trim().replace(/\/+$/,''); }
+
+    async function callApi(path, opts = {}){
+      const base = baseApi(); if(!base){ showOutput({error:'Falta Base URL'}); return; }
+      const url = base + (path.startsWith('/')?path:'/'+path);
+      opts.headers = {'Content-Type':'application/json'};
+      if(opts.body && typeof opts.body === 'object') opts.body = JSON.stringify(opts.body);
+      const res = await fetch(url, opts);
+      const data = await res.json().catch(()=>res.text());
+      showOutput({url,status:res.status,ok:res.ok,data});
+    }
+
+    // CREATE
+    $('btnCreate').onclick = ()=> callApi('/items',{method:'POST',body:{
+      id:$('create_id').value,categoria:$('create_categoria').value,
+      nombre:$('create_nombre').value,fecha:$('create_fecha').value,
+      cantidad:$('create_cantidad').value
+    }});
+    $('btnCreateClear').onclick = ()=>['create_id','create_categoria','create_nombre','create_fecha','create_cantidad'].forEach(i=>$(i).value='');
+
+    // READ
+    $('btnRead').onclick = ()=> callApi(`/items/${$('read_id').value}/${$('read_categoria').value}`,{method:'GET'});
+    $('btnReadClear').onclick = ()=>['read_id','read_categoria'].forEach(i=>$(i).value='');
+
+    // READ ALL
+    $('btnReadAll').onclick = ()=> callApi('/items',{method:'GET'});
+    $('btnReadAllClear').onclick = ()=> showOutput({});
+
+    // UPDATE
+    $('btnUpdate').onclick = ()=> callApi(`/items/${$('update_id').value}/${$('update_categoria').value}`,{method:'PUT',body:{
+      nombre:$('update_nombre').value,fecha:$('update_fecha').value,cantidad:$('update_cantidad').value
+    }});
+    $('btnUpdateClear').onclick = ()=>['update_id','update_categoria','update_nombre','update_fecha','update_cantidad'].forEach(i=>$(i).value='');
+
+    // DELETE
+    $('btnDelete').onclick = ()=> callApi(`/items/${$('delete_id').value}/${$('delete_categoria').value}`,{method:'DELETE'});
+    $('btnDeleteClear').onclick = ()=>['delete_id','delete_categoria'].forEach(i=>$(i).value='');
+  </script>
+</body>
+</html>
