@@ -1,31 +1,35 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: Despliegue CRUD ECS + Docker + DynamoDB con NLB + API Gateway + VPCLink + CORS
+Description: Despliegue mínimo de aplicación CRUD con ECS, Docker y DynamoDB usando NLB interno y API Gateway con VPC Link
 
 Parameters:
   ImageUri:
     Type: String
-    Description: URI de la imagen Docker en ECR
+    Description: URI de la imagen Docker en ECR (ej. 123456789012.dkr.ecr.us-east-1.amazonaws.com/my-app:latest)
+
   VpcId:
     Type: String
     Description: ID de la VPC existente
+
   PublicSubnets:
     Type: List<AWS::EC2::Subnet::Id>
-    Description: Subnets públicas para el NLB
+    Description: Subnets públicas (no usadas pero necesarias si quieres mantener referencia)
+
   PrivateSubnets:
     Type: List<AWS::EC2::Subnet::Id>
-    Description: Subnets privadas para ECS
+    Description: Subnets privadas para las tareas ECS y el NLB interno
+
   ContainerPort:
     Type: Number
     Default: 80
+    Description: Puerto del contenedor
+  
   DynamoTableName:
     Type: String
     Default: my-app-table
+    Description: Nombre de la tabla DynamoDB que usará la aplicación
 
 Resources:
-
-  ######################
   # IAM Roles
-  ######################
   ECSTaskExecutionRole:
     Type: AWS::IAM::Role
     Properties:
@@ -63,12 +67,13 @@ Resources:
                   - dynamodb:DeleteItem
                 Resource: "*"
 
-  ######################
-  # ECS Cluster y Task
-  ######################
+  # ECS Cluster
   MyECSCluster:
     Type: AWS::ECS::Cluster
+    Properties:
+      ClusterName: my-app-cluster
 
+  # ECS Task Definition
   MyECSTask:
     Type: AWS::ECS::TaskDefinition
     Properties:
@@ -91,9 +96,7 @@ Resources:
             - Name: AWS_REGION
               Value: !Ref "AWS::Region"
 
-  ######################
-  # Security Groups
-  ######################
+  # Security Group para ECS Tasks
   TaskSG:
     Type: AWS::EC2::SecurityGroup
     Properties:
@@ -103,33 +106,19 @@ Resources:
         - IpProtocol: tcp
           FromPort: !Ref ContainerPort
           ToPort: !Ref ContainerPort
-          SourceSecurityGroupId: !Ref NLBSG
+          CidrIp: 10.0.0.0/16  # Ajusta según tu CIDR de VPC
 
-  NLBSG:
-    Type: AWS::EC2::SecurityGroup
-    Properties:
-      GroupDescription: Permite tráfico al NLB
-      VpcId: !Ref VpcId
-      SecurityGroupIngress:
-        - IpProtocol: tcp
-          FromPort: !Ref ContainerPort
-          ToPort: !Ref ContainerPort
-          CidrIp: 0.0.0.0/0
-
-  ######################
-  # Network Load Balancer
-  ######################
-  MyNLB:
+  # NLB interno
+  AppLoadBalancer:
     Type: AWS::ElasticLoadBalancingV2::LoadBalancer
     Properties:
       Name: my-app-nlb
-      Scheme: internet-facing
+      Scheme: internal
       Type: network
-      Subnets: !Ref PublicSubnets
-      SecurityGroups:
-        - !Ref NLBSG
+      Subnets: !Ref PrivateSubnets
 
-  MyTargetGroup:
+  # Target Group para NLB
+  AppTargetGroup:
     Type: AWS::ElasticLoadBalancingV2::TargetGroup
     Properties:
       Name: my-app-tg
@@ -137,57 +126,45 @@ Resources:
       Protocol: TCP
       TargetType: ip
       VpcId: !Ref VpcId
+      HealthCheckProtocol: TCP
+      HealthCheckPort: !Ref ContainerPort
 
-  MyListener:
-    Type: AWS::ElasticLoadBalancingV2::Listener
-    Properties:
-      LoadBalancerArn: !Ref MyNLB
-      Port: !Ref ContainerPort
-      Protocol: TCP
-      DefaultActions:
-        - Type: forward
-          TargetGroupArn: !Ref MyTargetGroup
-
-  ######################
   # ECS Service
-  ######################
   MyECSService:
     Type: AWS::ECS::Service
     Properties:
       Cluster: !Ref MyECSCluster
+      ServiceName: my-app-service
       LaunchType: FARGATE
       DesiredCount: 1
       TaskDefinition: !Ref MyECSTask
       NetworkConfiguration:
         AwsvpcConfiguration:
-          AssignPublicIp: ENABLED
+          AssignPublicIp: DISABLED
           SecurityGroups:
             - !Ref TaskSG
           Subnets: !Ref PrivateSubnets
       LoadBalancers:
         - ContainerName: my-app-container
           ContainerPort: !Ref ContainerPort
-          TargetGroupArn: !Ref MyTargetGroup
+          TargetGroupArn: !Ref AppTargetGroup
 
-  ######################
-  # API Gateway + VPCLink
-  ######################
-  MyVpcLink:
-    Type: AWS::ApiGateway::VpcLink
-    Properties:
-      Name: MyVpcLinkToNLB
-      TargetArns:
-        - !Ref MyNLB
-
+  # API Gateway
   MyApi:
     Type: AWS::ApiGateway::RestApi
     Properties:
       Name: MyAppAPI
-      Description: API CRUD con NLB
-      EndpointConfiguration:
-        Types:
-          - REGIONAL
+      Description: API CRUD para items en DynamoDB
 
+  # VPC Link
+  MyVpcLink:
+    Type: AWS::ApiGateway::VpcLink
+    Properties:
+      Name: MyAppVpcLink
+      TargetArns:
+        - !Ref AppLoadBalancer
+
+  # API Resources
   ItemsResource:
     Type: AWS::ApiGateway::Resource
     Properties:
@@ -202,7 +179,7 @@ Resources:
       ParentId: !Ref ItemsResource
       PathPart: "{id}"
 
-  # POST /items con CORS
+  # API Methods
   PostItem:
     Type: AWS::ApiGateway::Method
     Properties:
@@ -211,15 +188,12 @@ Resources:
       HttpMethod: POST
       AuthorizationType: NONE
       Integration:
-        Type: HTTP_PROXY
+        Type: HTTP
         IntegrationHttpMethod: POST
-        Uri: !Sub "http://${MyNLB.DNSName}/items"
-      MethodResponses:
-        - StatusCode: 200
-          ResponseParameters:
-            method.response.header.Access-Control-Allow-Origin: true
+        Uri: !Sub "http://${AppLoadBalancer.DNSName}:${ContainerPort}/items"
+        ConnectionType: VPC_LINK
+        VpcLinkId: !Ref MyVpcLink
 
-  # GET /items con CORS
   GetItems:
     Type: AWS::ApiGateway::Method
     Properties:
@@ -228,13 +202,65 @@ Resources:
       HttpMethod: GET
       AuthorizationType: NONE
       Integration:
-        Type: HTTP_PROXY
+        Type: HTTP
         IntegrationHttpMethod: GET
-        Uri: !Sub "http://${MyNLB.DNSName}/items"
-      MethodResponses:
-        - StatusCode: 200
-          ResponseParameters:
-            method.response.header.Access-Control-Allow-Origin: true
+        Uri: !Sub "http://${AppLoadBalancer.DNSName}:${ContainerPort}/items"
+        ConnectionType: VPC_LINK
+        VpcLinkId: !Ref MyVpcLink
+
+  GetItem:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref MyApi
+      ResourceId: !Ref ItemResource
+      HttpMethod: GET
+      AuthorizationType: NONE
+      RequestParameters:
+        method.request.path.id: true
+      Integration:
+        Type: HTTP
+        IntegrationHttpMethod: GET
+        Uri: !Sub "http://${AppLoadBalancer.DNSName}:${ContainerPort}/items/{id}"
+        RequestParameters:
+          integration.request.path.id: method.request.path.id
+        ConnectionType: VPC_LINK
+        VpcLinkId: !Ref MyVpcLink
+
+  PutItem:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref MyApi
+      ResourceId: !Ref ItemResource
+      HttpMethod: PUT
+      AuthorizationType: NONE
+      RequestParameters:
+        method.request.path.id: true
+      Integration:
+        Type: HTTP
+        IntegrationHttpMethod: PUT
+        Uri: !Sub "http://${AppLoadBalancer.DNSName}:${ContainerPort}/items/{id}"
+        RequestParameters:
+          integration.request.path.id: method.request.path.id
+        ConnectionType: VPC_LINK
+        VpcLinkId: !Ref MyVpcLink
+
+  DeleteItem:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref MyApi
+      ResourceId: !Ref ItemResource
+      HttpMethod: DELETE
+      AuthorizationType: NONE
+      RequestParameters:
+        method.request.path.id: true
+      Integration:
+        Type: HTTP
+        IntegrationHttpMethod: DELETE
+        Uri: !Sub "http://${AppLoadBalancer.DNSName}:${ContainerPort}/items/{id}"
+        RequestParameters:
+          integration.request.path.id: method.request.path.id
+        ConnectionType: VPC_LINK
+        VpcLinkId: !Ref MyVpcLink
 
   # Deployment y Stage
   ApiDeployment:
@@ -242,6 +268,9 @@ Resources:
     DependsOn:
       - PostItem
       - GetItems
+      - GetItem
+      - PutItem
+      - DeleteItem
     Properties:
       RestApiId: !Ref MyApi
 
@@ -254,6 +283,9 @@ Resources:
 
 Outputs:
   NlbDNS:
-    Value: !GetAtt MyNLB.DNSName
+    Description: DNS del Network Load Balancer interno
+    Value: !GetAtt AppLoadBalancer.DNSName
+
   ApiUrl:
+    Description: URL base del API Gateway
     Value: !Sub "https://${MyApi}.execute-api.${AWS::Region}.amazonaws.com/prod"
