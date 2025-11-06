@@ -1,5 +1,5 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: Despliegue mínimo de aplicación CRUD con ECS, Docker y DynamoDB
+Description: Despliegue mínimo de aplicación CRUD con ECS, Docker y DynamoDB usando NLB interno y API Gateway con VPC Link y CORS habilitado
 
 Parameters:
   ImageUri:
@@ -10,18 +10,9 @@ Parameters:
     Type: String
     Description: ID de la VPC existente
 
-  PublicSubnets:
-    Type: List<AWS::EC2::Subnet::Id>
-    Description: Subnets públicas para el Load Balancer
-
   PrivateSubnets:
     Type: List<AWS::EC2::Subnet::Id>
-    Description: Subnets privadas para las tareas ECS
-
-  ContainerPort:
-    Type: Number
-    Default: 80
-    Description: Puerto del contenedor
+    Description: Subnets privadas para las tareas ECS y el NLB interno
   
   DynamoTableName:
     Type: String
@@ -29,269 +20,278 @@ Parameters:
     Description: Nombre de la tabla DynamoDB que usará la aplicación
 
 Resources:
-  # IAM Roles
-
-  # Rol para ejecutar tareas ECS (obligatorio para Fargate)
-  ECSTaskExecutionRole:
-    Type: AWS::IAM::Role
-    Properties:
-      AssumeRolePolicyDocument:
-        Version: "2012-10-17"
-        Statement:
-          - Effect: Allow
-            Principal:
-              Service: ecs-tasks.amazonaws.com
-            Action: sts:AssumeRole
-      ManagedPolicyArns:
-        - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
-
-  # Rol para que la tarea ECS acceda a DynamoDB (opcional si no usa DB)
-  ECSTaskRole:
-    Type: AWS::IAM::Role
-    Properties:
-      AssumeRolePolicyDocument:
-        Version: "2012-10-17"
-        Statement:
-          - Effect: Allow
-            Principal:
-              Service: ecs-tasks.amazonaws.com
-            Action: sts:AssumeRole
-      Policies:
-        - PolicyName: DynamoAccess
-          PolicyDocument:
-            Version: "2012-10-17"
-            Statement:
-              - Effect: Allow
-                Action:
-                  - dynamodb:PutItem
-                  - dynamodb:GetItem
-                  - dynamodb:Scan
-                  - dynamodb:UpdateItem
-                  - dynamodb:DeleteItem
-                Resource: "*"
-
-  # Cluster ECS (obligatorio)
+  # ============================================================
+  # ECS Cluster
+  # ============================================================
   MyECSCluster:
     Type: AWS::ECS::Cluster
     Properties:
       ClusterName: my-app-cluster
-# Definición del contenedor con las tareas a ejecutar, con los recursos CPU y Memoria necesarios
+
+  # ============================================================
+  # ECS Task Definition
+  # ============================================================
   MyECSTask:
     Type: AWS::ECS::TaskDefinition
     Properties:
       Family: my-app-task
-      Cpu: '256' #obligatorio para Fargate
-      Memory: '512' #obligatorio para Fargate
-      NetworkMode: awsvpc #obligatorio para Fargate solo puede ser awsvpc
-      RequiresCompatibilities: #Necesario para decirle que vas a usar Fargate
+      Cpu: '256'
+      Memory: '512'
+      NetworkMode: awsvpc
+      RequiresCompatibilities:
         - FARGATE
+      ExecutionRoleArn: !Sub arn:aws:iam::${AWS::AccountId}:role/LabRole
+      TaskRoleArn: !Sub arn:aws:iam::${AWS::AccountId}:role/LabRole
       ContainerDefinitions:
         - Name: my-app-container
-          Image: <TU_REPOSITORIO_DOCKER> 
+          Image: !Ref ImageUri
           PortMappings:
-            - ContainerPort: !Ref ContainerPort
+            - ContainerPort: 8080
           Environment:
             - Name: DYNAMO_TABLE
-              Value: <NOMBRE_DE_TU_TABLA>
+              Value: !Ref DynamoTableName
             - Name: AWS_REGION
-              Value: us-east-1
+              Value: !Ref "AWS::Region"
 
- # SG para el ALB (obligatorio si es internet-facing)
-  LoadBalancerSG:
-    Type: AWS::EC2::SecurityGroup
-    Properties:
-      GroupDescription: Permite tráfico HTTP desde Internet al ALB
-      VpcId: !Ref VpcId
-      SecurityGroupIngress:
-        - IpProtocol: tcp
-          FromPort: 80
-          ToPort: 80
-          CidrIp: 0.0.0.0/0
-
-  # SG para ECS Tasks (obligatorio para controlar acceso)
+  # ============================================================
+  # Security Group para ECS Tasks
+  # ============================================================
   TaskSG:
     Type: AWS::EC2::SecurityGroup
     Properties:
-      GroupDescription: Permite tráfico solo desde el ALB
+      GroupDescription: Permite tráfico solo desde NLB
       VpcId: !Ref VpcId
       SecurityGroupIngress:
         - IpProtocol: tcp
-          FromPort: !Ref ContainerPort
-          ToPort: !Ref ContainerPort
-          SourceSecurityGroupId: !Ref LoadBalancerSG
+          FromPort: 8080
+          ToPort: 8080
+          CidrIp: 10.0.0.0/16
 
-  # Application Load Balancer
-  AppLoadBalancer:
+  # ============================================================
+  # Network Load Balancer
+  # ============================================================
+  NetworkLoadBalancer:
     Type: AWS::ElasticLoadBalancingV2::LoadBalancer
     Properties:
-      Name: my-app-alb
-      Scheme: internet-facing #hace que sea accesible desde internet
-      Subnets: !Ref PublicSubnets #OBLIGATORIO: donde se despliega el LB
-      SecurityGroups:
-        - !Ref LoadBalancerSG
+      Name: my-app-nlb
+      Scheme: internal
+      Type: network
+      Subnets: !Ref PrivateSubnets
 
-  # Target Group para ECS
   AppTargetGroup:
     Type: AWS::ElasticLoadBalancingV2::TargetGroup
     Properties:
-      Name: my-app-tg #si no se pone AWS genera el nombre por su cuaneta
-      Port: !Ref ContainerPort
-      Protocol: HTTP
-      TargetType: ip #es necesario para usar Fargate
+      Name: my-app-tg
+      Port: 8080
+      Protocol: TCP
+      TargetType: ip
       VpcId: !Ref VpcId
-      HealthCheckPath: /health #opcional pero recomendable
 
-  # Listener del Load Balancer
-  AppListener:
+  Listener:
     Type: AWS::ElasticLoadBalancingV2::Listener
     Properties:
-      LoadBalancerArn: !Ref AppLoadBalancer #OBLIGATORIO
-      Port: 80                              #OBLIGATORIO
-      Protocol: HTTP                        #OBLIGATORIO
-      DefaultActions: #DEFINE QUE HACER CON EL TRÁFICO
+      LoadBalancerArn: !Ref NetworkLoadBalancer
+      Port: 8080
+      Protocol: TCP
+      DefaultActions:
         - Type: forward
           TargetGroupArn: !Ref AppTargetGroup
 
+  # ============================================================
+  # ECS Service
+  # ============================================================
   MyECSService:
     Type: AWS::ECS::Service
     Properties:
-      Cluster: !Ref MyECSCluster                # OBLIGATORIO Cluster donde correrán las tareas
-      ServiceName: my-app-service               # OPCIONAL puedes dejar que AWS genere un nombre
-      LaunchType: FARGATE                       # OBLIGATORIO tipo de ejecución
-      DesiredCount: 1                           # OBLIGATORIO número inicial de tareas
-      TaskDefinition: !Ref MyECSTask            # OBLIGATORIO la Task Definition que correrá
-      NetworkConfiguration:                     # OBLIGATORIO para Fargate
+      Cluster: !Ref MyECSCluster
+      ServiceName: my-app-service
+      LaunchType: FARGATE
+      DesiredCount: 1
+      TaskDefinition: !Ref MyECSTask
+      NetworkConfiguration:
         AwsvpcConfiguration:
-          AssignPublicIp: DISABLED             # OPCIONAL DISABLED si estás en subnets privadas
+          AssignPublicIp: ENABLED
           SecurityGroups:
-            - !Ref TaskSG                       # OBLIGATORIO SG que controla acceso a la tarea
-          Subnets: !Ref PrivateSubnets          # OBLIGATORIO subnets donde correrán las tareas
-      LoadBalancers:                             # OPCIONAL pero necesario si quieres exponer la tarea via ALB
+            - !Ref TaskSG
+          Subnets: !Ref PrivateSubnets
+      LoadBalancers:
         - ContainerName: my-app-container
-          ContainerPort: !Ref ContainerPort
+          ContainerPort: 8080
           TargetGroupArn: !Ref AppTargetGroup
 
-  MyApi:
-      Type: AWS::ApiGateway::RestApi
-      Properties:
-        Name: MyAppAPI
-        Description: API CRUD para items en DynamoDB
-  
-  #PARA DEFINIR LAS RUTAS /items y /items/{id}
+  # ============================================================
+  # API Gateway + VPC Link
+  # ============================================================
+  MyVpcLink:
+    Type: AWS::ApiGateway::VpcLink
+    Properties:
+      Name: MyAppVpcLink
+      TargetArns:
+        - !Ref NetworkLoadBalancer
+
+  ApiGatewayRestApi:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      Name: MyAppAPI
+      Description: API CRUD para items en DynamoDB
+      EndpointConfiguration:
+        Types: [REGIONAL]
+
+  # ============================================================
+  # API Resources y Métodos con CORS
+  # ============================================================
   ItemsResource:
     Type: AWS::ApiGateway::Resource
     Properties:
-      RestApiId: !Ref MyApi
-      ParentId: !GetAtt MyApi.RootResourceId
+      RestApiId: !Ref ApiGatewayRestApi
+      ParentId: !GetAtt ApiGatewayRestApi.RootResourceId
       PathPart: items
+
+  # Método ANY con integración a ECS + CORS
+  ItemsMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref ApiGatewayRestApi
+      ResourceId: !Ref ItemsResource
+      HttpMethod: ANY
+      AuthorizationType: NONE
+      Integration:
+        Type: HTTP_PROXY
+        IntegrationHttpMethod: ANY
+        Uri: !Sub "http://${NetworkLoadBalancer.DNSName}:8080/items"
+        ConnectionType: VPC_LINK
+        ConnectionId: !Ref MyVpcLink
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+              method.response.header.Access-Control-Allow-Methods: "'GET,POST,PUT,DELETE,OPTIONS'"
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Origin: true
+            method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Allow-Methods: true
+
+  ItemsOptionsMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref ApiGatewayRestApi
+      ResourceId: !Ref ItemsResource
+      HttpMethod: OPTIONS
+      AuthorizationType: NONE
+      Integration:
+        Type: MOCK
+        RequestTemplates:
+          application/json: '{"statusCode": 200}'
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+              method.response.header.Access-Control-Allow-Methods: "'GET,POST,PUT,DELETE,OPTIONS'"
+            ResponseTemplates:
+              application/json: '{}'
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Origin: true
+            method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Allow-Methods: true
 
   ItemResource:
     Type: AWS::ApiGateway::Resource
     Properties:
-      RestApiId: !Ref MyApi
+      RestApiId: !Ref ApiGatewayRestApi
       ParentId: !Ref ItemsResource
       PathPart: "{id}"
 
-  # POST /items
-  PostItem:
+  ItemMethod:
     Type: AWS::ApiGateway::Method
     Properties:
-      RestApiId: !Ref MyApi
-      ResourceId: !Ref ItemsResource
-      HttpMethod: POST
-      AuthorizationType: NONE
-      Integration:
-        Type: HTTP_PROXY
-        IntegrationHttpMethod: POST
-        Uri: !Sub "http://${AppLoadBalancer.DNSName}/items"
-
-  # GET /items
-  GetItems:
-    Type: AWS::ApiGateway::Method
-    Properties:
-      RestApiId: !Ref MyApi
-      ResourceId: !Ref ItemsResource
-      HttpMethod: GET
-      AuthorizationType: NONE
-      Integration:
-        Type: HTTP_PROXY
-        IntegrationHttpMethod: GET
-        Uri: !Sub "http://${AppLoadBalancer.DNSName}/items"
-
-  # GET /items/{id}
-  GetItem:
-    Type: AWS::ApiGateway::Method
-    Properties:
-      RestApiId: !Ref MyApi
+      RestApiId: !Ref ApiGatewayRestApi
       ResourceId: !Ref ItemResource
-      HttpMethod: GET
+      HttpMethod: ANY
       AuthorizationType: NONE
       RequestParameters:
         method.request.path.id: true
       Integration:
         Type: HTTP_PROXY
-        IntegrationHttpMethod: GET
-        Uri: !Sub "http://${AppLoadBalancer.DNSName}/items/{id}"
+        IntegrationHttpMethod: ANY
+        Uri: !Sub "http://${NetworkLoadBalancer.DNSName}:8080/items/{id}"
+        ConnectionType: VPC_LINK
+        ConnectionId: !Ref MyVpcLink
         RequestParameters:
-          integration.request.path.id: method.request.path.id
+          integration.request.path.id: "method.request.path.id"
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+              method.response.header.Access-Control-Allow-Methods: "'GET,POST,PUT,DELETE,OPTIONS'"
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Origin: true
+            method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Allow-Methods: true
 
-  # PUT /items/{id}
-  PutItem:
+  ItemOptionsMethod:
     Type: AWS::ApiGateway::Method
     Properties:
-      RestApiId: !Ref MyApi
+      RestApiId: !Ref ApiGatewayRestApi
       ResourceId: !Ref ItemResource
-      HttpMethod: PUT
+      HttpMethod: OPTIONS
       AuthorizationType: NONE
-      RequestParameters:
-        method.request.path.id: true
       Integration:
-        Type: HTTP_PROXY
-        IntegrationHttpMethod: PUT
-        Uri: !Sub "http://${AppLoadBalancer.DNSName}/items/{id}"
-        RequestParameters:
-          integration.request.path.id: method.request.path.id
+        Type: MOCK
+        RequestTemplates:
+          application/json: '{"statusCode": 200}'
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+              method.response.header.Access-Control-Allow-Methods: "'GET,POST,PUT,DELETE,OPTIONS'"
+            ResponseTemplates:
+              application/json: '{}'
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Origin: true
+            method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Allow-Methods: true
 
-  # DELETE /items/{id}
-  DeleteItem:
-    Type: AWS::ApiGateway::Method
-    Properties:
-      RestApiId: !Ref MyApi
-      ResourceId: !Ref ItemResource
-      HttpMethod: DELETE
-      AuthorizationType: NONE
-      RequestParameters:
-        method.request.path.id: true
-      Integration:
-        Type: HTTP_PROXY
-        IntegrationHttpMethod: DELETE
-        Uri: !Sub "http://${AppLoadBalancer.DNSName}/items/{id}"
-        RequestParameters:
-          integration.request.path.id: method.request.path.id
-
+  # ============================================================
+  # Deployment y Stage
+  # ============================================================
   ApiDeployment:
     Type: AWS::ApiGateway::Deployment
     DependsOn:
-      - PostItem
-      - GetItems
-      - GetItem
-      - PutItem
-      - DeleteItem
+      - ItemsMethod
+      - ItemsOptionsMethod
+      - ItemMethod
+      - ItemOptionsMethod
     Properties:
-      RestApiId: !Ref MyApi
+      RestApiId: !Ref ApiGatewayRestApi
 
   ApiStage:
     Type: AWS::ApiGateway::Stage
     Properties:
-      RestApiId: !Ref MyApi
+      RestApiId: !Ref ApiGatewayRestApi
       DeploymentId: !Ref ApiDeployment
       StageName: prod
 
 Outputs:
   LoadBalancerDNS:
-    Description: DNS del Application Load Balancer
-    Value: !GetAtt AppLoadBalancer.DNSName
+    Description: DNS del Network Load Balancer interno
+    Value: !GetAtt NetworkLoadBalancer.DNSName
 
   ApiUrl:
     Description: URL base del API Gateway
-    Value: !Sub "https://${MyApi}.execute-api.${AWS::Region}.amazonaws.com/prod"
+    Value: !Sub "https://${ApiGatewayRestApi}.execute-api.${AWS::Region}.amazonaws.com/prod/items"
+
+  ClusterName:
+    Description: Nombre del Cluster ECS
+    Value: !Ref MyECSCluster
