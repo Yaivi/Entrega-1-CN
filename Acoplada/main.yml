@@ -1,297 +1,319 @@
-AWSTemplateFormatVersion: '2010-09-09'
-Description: Despliegue mínimo de aplicación CRUD con ECS, Docker y DynamoDB usando NLB interno y API Gateway con VPC Link y CORS habilitado
+  AWSTemplateFormatVersion: '2010-09-09'
+  Description: Despliegue minimo de aplicacion CRUD con ECS, Docker y DynamoDB usando NLB interno y API Gateway con VPC Link y CORS habilitado
 
-Parameters:
-  ImageUri:
-    Type: String
-    Description: URI de la imagen Docker en ECR (ej. 123456789012.dkr.ecr.us-east-1.amazonaws.com/my-app:latest)
+  Parameters:
+    ImageUri:
+      Type: String
+      Description: URI de la imagen Docker en ECR (ej. 123456789012.dkr.ecr.us-east-1.amazonaws.com/my-app:latest)
 
-  VpcId:
-    Type: String
-    Description: ID de la VPC existente
+    VpcId:
+      Type: String
+      Description: ID de la VPC existente
 
-  PrivateSubnets:
-    Type: List<AWS::EC2::Subnet::Id>
-    Description: Subnets privadas para las tareas ECS y el NLB interno
-  
-  DynamoTableName:
-    Type: String
-    Default: my-app-table
-    Description: Nombre de la tabla DynamoDB que usará la aplicación
+    PrivateSubnets:
+      Type: List<AWS::EC2::Subnet::Id>
+      Description: Subnets privadas para las tareas ECS y el NLB interno
+    
+    DynamoTableName:
+      Type: String
+      Default: MiTablaEjemplo
+      Description: Nombre de la tabla DynamoDB que usara la aplicacion
 
-Resources:
-  # ============================================================
-  # ECS Cluster
-  # ============================================================
-  MyECSCluster:
-    Type: AWS::ECS::Cluster
-    Properties:
-      ClusterName: my-app-cluster
+  Resources:
+    # ============================================================
+    # ECS Cluster
+    # ============================================================
+    MyECSCluster:
+      Type: AWS::ECS::Cluster
+      Properties:
+        ClusterName: my-app-cluster
 
-  # ============================================================
-  # ECS Task Definition
-  # ============================================================
-  MyECSTask:
-    Type: AWS::ECS::TaskDefinition
-    Properties:
-      Family: my-app-task
-      Cpu: '256'
-      Memory: '512'
-      NetworkMode: awsvpc
-      RequiresCompatibilities:
-        - FARGATE
-      ExecutionRoleArn: !Sub arn:aws:iam::${AWS::AccountId}:role/LabRole
-      TaskRoleArn: !Sub arn:aws:iam::${AWS::AccountId}:role/LabRole
-      ContainerDefinitions:
-        - Name: my-app-container
-          Image: !Ref ImageUri
-          PortMappings:
-            - ContainerPort: 8080
-          Environment:
-            - Name: DYNAMO_TABLE
-              Value: !Ref DynamoTableName
-            - Name: AWS_REGION
-              Value: !Ref "AWS::Region"
+    # ============================================================
+    # ECS Task Definition
+    # ============================================================
+    MyECSTask:
+      Type: AWS::ECS::TaskDefinition
+      Properties:
+        Family: my-app-task
+        Cpu: '256'
+        Memory: '512'
+        NetworkMode: awsvpc
+        RequiresCompatibilities:
+          - FARGATE
+        ExecutionRoleArn: !Sub arn:aws:iam::${AWS::AccountId}:role/LabRole
+        TaskRoleArn: !Sub arn:aws:iam::${AWS::AccountId}:role/LabRole
+        ContainerDefinitions:
+          - Name: my-app-container
+            Image: !Ref ImageUri
+            PortMappings:
+              - ContainerPort: 8080
+            Environment:
+              - Name: DYNAMO_TABLE
+                Value: !Ref DynamoTableName
 
-  # ============================================================
-  # Security Group para ECS Tasks
-  # ============================================================
-  TaskSG:
-    Type: AWS::EC2::SecurityGroup
-    Properties:
-      GroupDescription: Permite tráfico solo desde NLB
-      VpcId: !Ref VpcId
-      SecurityGroupIngress:
-        - IpProtocol: tcp
-          FromPort: 8080
-          ToPort: 8080
-          CidrIp: 10.0.0.0/16
+    # ============================================================
+    # Security Group para ECS Tasks
+    # ============================================================
+    TaskSG:
+      Type: AWS::EC2::SecurityGroup
+      Properties:
+        GroupDescription: Permite trafico solo desde NLB
+        VpcId: !Ref VpcId
+        SecurityGroupIngress:
+          - IpProtocol: tcp
+            FromPort: 8080
+            ToPort: 8080
+            CidrIp: 0.0.0.0/0
 
-  # ============================================================
-  # Network Load Balancer
-  # ============================================================
-  NetworkLoadBalancer:
-    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
-    Properties:
-      Name: my-app-nlb
-      Scheme: internal
-      Type: network
-      Subnets: !Ref PrivateSubnets
+    NLBSG:
+      Type: AWS::EC2::SecurityGroup
+      Properties:
+        GroupDescription: Permite trafico solo desde NLB
+        VpcId: !Ref VpcId
+        SecurityGroupIngress:
+          - IpProtocol: tcp
+            FromPort: 8080
+            ToPort: 8080
+            CidrIp: 0.0.0.0/0
 
-  AppTargetGroup:
-    Type: AWS::ElasticLoadBalancingV2::TargetGroup
-    Properties:
-      Name: my-app-tg
-      Port: 8080
-      Protocol: TCP
-      TargetType: ip
-      VpcId: !Ref VpcId
+    # ============================================================
+    # Network Load Balancer
+    # ============================================================
+    NetworkLoadBalancer:
+      Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+      Properties:
+        Name: my-app-nlb
+        Scheme: internal
+        Type: network
+        Subnets: !Ref PrivateSubnets
+        SecurityGroups:
+        - !Ref NLBSG
 
-  Listener:
-    Type: AWS::ElasticLoadBalancingV2::Listener
-    Properties:
-      LoadBalancerArn: !Ref NetworkLoadBalancer
-      Port: 8080
-      Protocol: TCP
-      DefaultActions:
-        - Type: forward
-          TargetGroupArn: !Ref AppTargetGroup
+    AppTargetGroup:
+      Type: AWS::ElasticLoadBalancingV2::TargetGroup
+      Properties:
+        Name: my-app-tg
+        Port: 8080
+        Protocol: TCP
+        TargetType: ip
+        VpcId: !Ref VpcId
 
-  # ============================================================
-  # ECS Service
-  # ============================================================
-  MyECSService:
-    Type: AWS::ECS::Service
-    Properties:
-      Cluster: !Ref MyECSCluster
-      ServiceName: my-app-service
-      LaunchType: FARGATE
-      DesiredCount: 1
-      TaskDefinition: !Ref MyECSTask
-      NetworkConfiguration:
-        AwsvpcConfiguration:
-          AssignPublicIp: ENABLED
-          SecurityGroups:
-            - !Ref TaskSG
-          Subnets: !Ref PrivateSubnets
-      LoadBalancers:
-        - ContainerName: my-app-container
-          ContainerPort: 8080
-          TargetGroupArn: !Ref AppTargetGroup
+    Listener:
+      Type: AWS::ElasticLoadBalancingV2::Listener
+      Properties:
+        LoadBalancerArn: !Ref NetworkLoadBalancer
+        Port: 8080
+        Protocol: TCP
+        DefaultActions:
+          - Type: forward
+            TargetGroupArn: !Ref AppTargetGroup
 
-  # ============================================================
-  # API Gateway + VPC Link
-  # ============================================================
-  MyVpcLink:
-    Type: AWS::ApiGateway::VpcLink
-    Properties:
-      Name: MyAppVpcLink
-      TargetArns:
-        - !Ref NetworkLoadBalancer
+    # ============================================================
+    # ECS Service
+    # ============================================================
+    MyECSService:
+      Type: AWS::ECS::Service
+      DependsOn:
+      - Listener
+      Properties:
+        Cluster: !Ref MyECSCluster
+        ServiceName: my-app-service
+        LaunchType: FARGATE
+        DesiredCount: 1
+        TaskDefinition: !Ref MyECSTask
+        NetworkConfiguration:
+          AwsvpcConfiguration:
+            AssignPublicIp: ENABLED
+            SecurityGroups:
+              - !Ref TaskSG
+            Subnets: !Ref PrivateSubnets
+        LoadBalancers:
+          - ContainerName: my-app-container
+            ContainerPort: 8080
+            TargetGroupArn: !Ref AppTargetGroup
 
-  ApiGatewayRestApi:
-    Type: AWS::ApiGateway::RestApi
-    Properties:
-      Name: MyAppAPI
-      Description: API CRUD para items en DynamoDB
-      EndpointConfiguration:
-        Types: [REGIONAL]
+    # ============================================================
+    # API Gateway + VPC Link
+    # ============================================================
+    MyVpcLink:
+      Type: AWS::ApiGateway::VpcLink
+      Properties:
+        Name: MyAppVpcLink
+        TargetArns:
+          - !Ref NetworkLoadBalancer
 
-  # ============================================================
-  # API Resources y Métodos con CORS
-  # ============================================================
-  ItemsResource:
-    Type: AWS::ApiGateway::Resource
-    Properties:
-      RestApiId: !Ref ApiGatewayRestApi
-      ParentId: !GetAtt ApiGatewayRestApi.RootResourceId
-      PathPart: items
+    ApiGatewayRestApi:
+      Type: AWS::ApiGateway::RestApi
+      Properties:
+        Name: MyAppAPI
+        Description: API CRUD para items en DynamoDB
+        EndpointConfiguration:
+          Types: [REGIONAL]
 
-  # Método ANY con integración a ECS + CORS
-  ItemsMethod:
-    Type: AWS::ApiGateway::Method
-    Properties:
-      RestApiId: !Ref ApiGatewayRestApi
-      ResourceId: !Ref ItemsResource
-      HttpMethod: ANY
-      AuthorizationType: NONE
-      Integration:
-        Type: HTTP_PROXY
-        IntegrationHttpMethod: ANY
-        Uri: !Sub "http://${NetworkLoadBalancer.DNSName}:8080/items"
-        ConnectionType: VPC_LINK
-        ConnectionId: !Ref MyVpcLink
-        IntegrationResponses:
+    # ============================================================
+    # API Resources y Metodos con CORS
+    # ============================================================
+    ItemsResource:
+      Type: AWS::ApiGateway::Resource
+      Properties:
+        RestApiId: !Ref ApiGatewayRestApi
+        ParentId: !GetAtt ApiGatewayRestApi.RootResourceId
+        PathPart: items
+
+    # Metodo ANY con integracion a ECS + CORS
+    ItemsMethod:
+      Type: AWS::ApiGateway::Method
+      Properties:
+        RestApiId: !Ref ApiGatewayRestApi
+        ResourceId: !Ref ItemsResource
+        HttpMethod: ANY
+        AuthorizationType: NONE
+        Integration:
+          Type: HTTP_PROXY
+          IntegrationHttpMethod: ANY
+          Uri: !Sub "http://${NetworkLoadBalancer.DNSName}:8080/items"
+          ConnectionType: VPC_LINK
+          ConnectionId: !Ref MyVpcLink
+          IntegrationResponses:
+            - StatusCode: 200
+              ResponseParameters:
+                method.response.header.Access-Control-Allow-Origin: "'*'"
+                method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+                method.response.header.Access-Control-Allow-Methods: "'GET,POST,PUT,DELETE,OPTIONS'"
+        MethodResponses:
           - StatusCode: 200
             ResponseParameters:
-              method.response.header.Access-Control-Allow-Origin: "'*'"
-              method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
-              method.response.header.Access-Control-Allow-Methods: "'GET,POST,PUT,DELETE,OPTIONS'"
-      MethodResponses:
-        - StatusCode: 200
-          ResponseParameters:
-            method.response.header.Access-Control-Allow-Origin: true
-            method.response.header.Access-Control-Allow-Headers: true
-            method.response.header.Access-Control-Allow-Methods: true
+              method.response.header.Access-Control-Allow-Origin: true
+              method.response.header.Access-Control-Allow-Headers: true
+              method.response.header.Access-Control-Allow-Methods: true
 
-  ItemsOptionsMethod:
-    Type: AWS::ApiGateway::Method
-    Properties:
-      RestApiId: !Ref ApiGatewayRestApi
-      ResourceId: !Ref ItemsResource
-      HttpMethod: OPTIONS
-      AuthorizationType: NONE
-      Integration:
-        Type: MOCK
-        RequestTemplates:
-          application/json: '{"statusCode": 200}'
-        IntegrationResponses:
+    ItemsOptionsMethod:
+      Type: AWS::ApiGateway::Method
+      Properties:
+        RestApiId: !Ref ApiGatewayRestApi
+        ResourceId: !Ref ItemsResource
+        HttpMethod: OPTIONS
+        AuthorizationType: NONE
+        Integration:
+          Type: MOCK
+          RequestTemplates:
+            application/json: '{"statusCode": 200}'
+          IntegrationResponses:
+            - StatusCode: 200
+              ResponseParameters:
+                method.response.header.Access-Control-Allow-Origin: "'*'"
+                method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+                method.response.header.Access-Control-Allow-Methods: "'GET,POST,PUT,DELETE,OPTIONS'"
+              ResponseTemplates:
+                application/json: '{}'
+        MethodResponses:
           - StatusCode: 200
             ResponseParameters:
-              method.response.header.Access-Control-Allow-Origin: "'*'"
-              method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
-              method.response.header.Access-Control-Allow-Methods: "'GET,POST,PUT,DELETE,OPTIONS'"
-            ResponseTemplates:
-              application/json: '{}'
-      MethodResponses:
-        - StatusCode: 200
-          ResponseParameters:
-            method.response.header.Access-Control-Allow-Origin: true
-            method.response.header.Access-Control-Allow-Headers: true
-            method.response.header.Access-Control-Allow-Methods: true
+              method.response.header.Access-Control-Allow-Origin: true
+              method.response.header.Access-Control-Allow-Headers: true
+              method.response.header.Access-Control-Allow-Methods: true
 
-  ItemResource:
-    Type: AWS::ApiGateway::Resource
-    Properties:
-      RestApiId: !Ref ApiGatewayRestApi
-      ParentId: !Ref ItemsResource
-      PathPart: "{id}"
+    ItemResource:
+      Type: AWS::ApiGateway::Resource
+      Properties:
+        RestApiId: !Ref ApiGatewayRestApi
+        ParentId: !Ref ItemsResource
+        PathPart: "{id}"
 
-  ItemMethod:
-    Type: AWS::ApiGateway::Method
-    Properties:
-      RestApiId: !Ref ApiGatewayRestApi
-      ResourceId: !Ref ItemResource
-      HttpMethod: ANY
-      AuthorizationType: NONE
-      RequestParameters:
-        method.request.path.id: true
-      Integration:
-        Type: HTTP_PROXY
-        IntegrationHttpMethod: ANY
-        Uri: !Sub "http://${NetworkLoadBalancer.DNSName}:8080/items/{id}"
-        ConnectionType: VPC_LINK
-        ConnectionId: !Ref MyVpcLink
+    ItemMethod:
+      Type: AWS::ApiGateway::Method
+      Properties:
+        RestApiId: !Ref ApiGatewayRestApi
+        ResourceId: !Ref ItemResource
+        HttpMethod: ANY
+        AuthorizationType: NONE
         RequestParameters:
-          integration.request.path.id: "method.request.path.id"
-        IntegrationResponses:
+          method.request.path.id: true
+        Integration:
+          Type: HTTP_PROXY
+          IntegrationHttpMethod: ANY
+          Uri: !Sub "http://${NetworkLoadBalancer.DNSName}:8080/items/{id}"
+          ConnectionType: VPC_LINK
+          ConnectionId: !Ref MyVpcLink
+          RequestParameters:
+            integration.request.path.id: "method.request.path.id"
+          IntegrationResponses:
+            - StatusCode: 200
+              ResponseParameters:
+                method.response.header.Access-Control-Allow-Origin: "'*'"
+                method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+                method.response.header.Access-Control-Allow-Methods: "'GET,POST,PUT,DELETE,OPTIONS'"
+        MethodResponses:
           - StatusCode: 200
             ResponseParameters:
-              method.response.header.Access-Control-Allow-Origin: "'*'"
-              method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
-              method.response.header.Access-Control-Allow-Methods: "'GET,POST,PUT,DELETE,OPTIONS'"
-      MethodResponses:
-        - StatusCode: 200
-          ResponseParameters:
-            method.response.header.Access-Control-Allow-Origin: true
-            method.response.header.Access-Control-Allow-Headers: true
-            method.response.header.Access-Control-Allow-Methods: true
+              method.response.header.Access-Control-Allow-Origin: true
+              method.response.header.Access-Control-Allow-Headers: true
+              method.response.header.Access-Control-Allow-Methods: true
 
-  ItemOptionsMethod:
-    Type: AWS::ApiGateway::Method
-    Properties:
-      RestApiId: !Ref ApiGatewayRestApi
-      ResourceId: !Ref ItemResource
-      HttpMethod: OPTIONS
-      AuthorizationType: NONE
-      Integration:
-        Type: MOCK
-        RequestTemplates:
-          application/json: '{"statusCode": 200}'
-        IntegrationResponses:
+    ItemOptionsMethod:
+      Type: AWS::ApiGateway::Method
+      Properties:
+        RestApiId: !Ref ApiGatewayRestApi
+        ResourceId: !Ref ItemResource
+        HttpMethod: OPTIONS
+        AuthorizationType: NONE
+        Integration:
+          Type: MOCK
+          RequestTemplates:
+            application/json: '{"statusCode": 200}'
+          IntegrationResponses:
+            - StatusCode: 200
+              ResponseParameters:
+                method.response.header.Access-Control-Allow-Origin: "'*'"
+                method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+                method.response.header.Access-Control-Allow-Methods: "'GET,POST,PUT,DELETE,OPTIONS'"
+              ResponseTemplates:
+                application/json: '{}'
+        MethodResponses:
           - StatusCode: 200
             ResponseParameters:
-              method.response.header.Access-Control-Allow-Origin: "'*'"
-              method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
-              method.response.header.Access-Control-Allow-Methods: "'GET,POST,PUT,DELETE,OPTIONS'"
-            ResponseTemplates:
-              application/json: '{}'
-      MethodResponses:
-        - StatusCode: 200
-          ResponseParameters:
-            method.response.header.Access-Control-Allow-Origin: true
-            method.response.header.Access-Control-Allow-Headers: true
-            method.response.header.Access-Control-Allow-Methods: true
+              method.response.header.Access-Control-Allow-Origin: true
+              method.response.header.Access-Control-Allow-Headers: true
+              method.response.header.Access-Control-Allow-Methods: true
 
-  # ============================================================
-  # Deployment y Stage
-  # ============================================================
-  ApiDeployment:
-    Type: AWS::ApiGateway::Deployment
-    DependsOn:
-      - ItemsMethod
-      - ItemsOptionsMethod
-      - ItemMethod
-      - ItemOptionsMethod
-    Properties:
-      RestApiId: !Ref ApiGatewayRestApi
+    # ============================================================
+    # Deployment y Stage
+    # ============================================================
+    ApiDeployment:
+      Type: AWS::ApiGateway::Deployment
+      DependsOn:
+        - ItemsMethod
+        - ItemsOptionsMethod
+        - ItemMethod
+        - ItemOptionsMethod
+      Properties:
+        RestApiId: !Ref ApiGatewayRestApi
 
-  ApiStage:
-    Type: AWS::ApiGateway::Stage
-    Properties:
-      RestApiId: !Ref ApiGatewayRestApi
-      DeploymentId: !Ref ApiDeployment
-      StageName: prod
+    ApiStage:
+      Type: AWS::ApiGateway::Stage
+      Properties:
+        RestApiId: !Ref ApiGatewayRestApi
+        DeploymentId: !Ref ApiDeployment
+        StageName: prod
+    APIKey:
+      Type: AWS::ApiGateway::ApiKey
+      Properties:
+        Name: books-api-key
+        Enabled: true
 
-Outputs:
-  LoadBalancerDNS:
-    Description: DNS del Network Load Balancer interno
-    Value: !GetAtt NetworkLoadBalancer.DNSName
+  Outputs:
+    LoadBalancerDNS:
+      Description: DNS del Network Load Balancer interno
+      Value: !GetAtt NetworkLoadBalancer.DNSName
 
-  ApiUrl:
-    Description: URL base del API Gateway
-    Value: !Sub "https://${ApiGatewayRestApi}.execute-api.${AWS::Region}.amazonaws.com/prod/items"
+    ApiUrl:
+      Description: URL base del API Gateway
+      Value: !Sub "https://${ApiGatewayRestApi}.execute-api.${AWS::Region}.amazonaws.com/prod/items"
 
-  ClusterName:
-    Description: Nombre del Cluster ECS
-    Value: !Ref MyECSCluster
+    ClusterName:
+      Description: Nombre del Cluster ECS
+      Value: !Ref MyECSCluster
+
+    APIKeyId:
+      Description: API Key ID
+      Value: !Ref APIKey

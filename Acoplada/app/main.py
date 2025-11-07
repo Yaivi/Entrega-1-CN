@@ -1,99 +1,81 @@
-import os
-from fastapi import FastAPI, HTTPException, Query
-from fastapi.middleware.cors import CORSMiddleware
-from typing import List, Optional
-from models.item import Item, ItemCreate
+from flask import Flask, jsonify, request
+from flask_cors import CORS
 from db.factory import create_db
+from models.item import Item, ItemCreate
 import botocore.exceptions
 
-app = FastAPI(title="Items API (DynamoDB PK compuesta)")
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["GET","POST","PUT","DELETE","OPTIONS"],
-    allow_headers=["*"]
-)
+app = Flask(__name__)
+CORS(app, resources={r"/*": {"origins": "*"}})
 
 db = create_db()
 
-@app.get("/health")
+@app.route("/health", methods=["GET"])
 def health():
-    return {"status": "ok"}
+    return jsonify({"status": "ok"})
 
-@app.post("/items", status_code=201, response_model=Item)
-def create_item(payload: ItemCreate):
+@app.route("/items", methods=["POST"])
+def create_item():
     try:
+        data = request.get_json()
+        payload = ItemCreate(**data)
         created = db.create_item(payload)
-        return created
+        return jsonify(created.dict()), 201
     except botocore.exceptions.ClientError as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        return jsonify({"error": str(e)}), 500
 
-@app.get("/items", response_model=List[Item])
+@app.route("/items", methods=["GET"])
 def list_items():
     try:
-        return db.get_all_items()
+        items = db.get_all_items()
+        return jsonify([it.dict() for it in items]), 200
     except botocore.exceptions.ClientError as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        return jsonify({"error": str(e)}), 500
 
-@app.get("/items/{item_id}", response_model=List[Item])
-def get_items_by_id(item_id: str):
-    """
-    Devuelve 0..N items con la misma partition key 'id'.
-    Si necesitas obtener un item concreto (id + categoria) usa query param ?categoria=X
-    """
+@app.route("/items/<item_id>", methods=["GET"])
+def get_items_by_id(item_id):
     try:
         items = db.query_by_id(item_id)
-        return items
+        return jsonify([it.dict() for it in items]), 200
     except botocore.exceptions.ClientError as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        return jsonify({"error": str(e)}), 500
 
-@app.get("/items/{item_id}/exact", response_model=Item)
-def get_item_exact(item_id: str, categoria: str = Query(..., description="categoria (range key)")):
+@app.route("/items/<item_id>/exact", methods=["GET"])
+def get_item_exact(item_id):
+    categoria = request.args.get("categoria")
+    if not categoria:
+        return jsonify({"error": "categoria es requerida"}), 400
     try:
         it = db.get_item_exact(item_id, categoria)
         if not it:
-            raise HTTPException(status_code=404, detail="Item no encontrado")
-        return it
+            return jsonify({"error": "Item no encontrado"}), 404
+        return jsonify(it.dict()), 200
     except botocore.exceptions.ClientError as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        return jsonify({"error": str(e)}), 500
 
-@app.put("/items/{item_id}", response_model=Item)
-def update_item(item_id: str, payload: ItemCreate, categoria: Optional[str] = Query(None, description="Categoria del item a actualizar. Si no se pasa y hay exactamente 1 item con ese id se usará esa.")):
+@app.route("/items/<item_id>", methods=["PUT"])
+def update_item(item_id):
+    data = request.get_json()
+    categoria = request.args.get("categoria")
     try:
-        if categoria:
-            target_cat = categoria
-        else:
-            # si no se pasa categoria, intentamos resolver: si hay 1 item lo usamos, si hay >1 devolvemos 400
-            matches = db.query_by_id(item_id)
-            if len(matches) == 0:
-                raise HTTPException(status_code=404, detail="Item no encontrado")
-            if len(matches) > 1:
-                raise HTTPException(status_code=400, detail="Ambigüedad: hay varios items con ese id. Proporciona ?categoria=...")
-            target_cat = matches[0].categoria
-
-        updated = db.update_item(item_id, target_cat, payload)
+        payload = ItemCreate(**data)
+        updated = db.update_item(item_id, categoria, payload)
         if not updated:
-            raise HTTPException(status_code=404, detail="Item no encontrado para actualizar")
-        return updated
+            return jsonify({"error": "Item no encontrado"}), 404
+        return jsonify(updated.dict()), 200
     except botocore.exceptions.ClientError as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        return jsonify({"error": str(e)}), 500
 
-@app.delete("/items/{item_id}", status_code=204)
-def delete_item(item_id: str, categoria: Optional[str] = Query(None, description="Categoria del item a eliminar. Si no se pasa y hay exactamente 1 item con ese id se usará esa.")):
+@app.route("/items/<item_id>", methods=["DELETE"])
+def delete_item(item_id):
+    categoria = request.args.get("categoria")
     try:
-        if categoria:
-            target_cat = categoria
-        else:
-            matches = db.query_by_id(item_id)
-            if len(matches) == 0:
-                raise HTTPException(status_code=404, detail="Item no encontrado")
-            if len(matches) > 1:
-                raise HTTPException(status_code=400, detail="Ambigüedad: hay varios items con ese id. Proporciona ?categoria=...")
-            target_cat = matches[0].categoria
-        deleted = db.delete_item(item_id, target_cat)
+        deleted = db.delete_item(item_id, categoria)
         if not deleted:
-            raise HTTPException(status_code=404, detail="Item no encontrado para eliminar")
-        return None
+            return jsonify({"error": "Item no encontrado"}), 404
+        return "", 204
     except botocore.exceptions.ClientError as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        return jsonify({"error": str(e)}), 500
+
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=8080)

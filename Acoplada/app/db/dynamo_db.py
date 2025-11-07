@@ -8,8 +8,8 @@ from models.item import Item, ItemCreate
 class DynamoDBTable:
     def __init__(self, table_name: str, region_name: Optional[str] = None):
         session = boto3.session.Session()
-        self.dynamodb = session.resource('dynamodb', region_name=region_name)
-        self.table = self.dynamodb.Table(table_name)
+        self.dynamodb = boto3.resource('dynamodb', region_name='us-east-1')
+        self.table = self.dynamodb.Table('MiTablaEjemplo')
 
     def create_item(self, payload: ItemCreate, item_id: Optional[str] = None) -> Item:
         data = payload.dict()

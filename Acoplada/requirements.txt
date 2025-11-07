@@ -3,3 +3,4 @@ boto3
 pydantic
 psycopg2-binary
 botocore
+flask-cors
