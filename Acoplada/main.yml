@@ -65,17 +65,6 @@
             ToPort: 8080
             CidrIp: 0.0.0.0/0
 
-    NLBSG:
-      Type: AWS::EC2::SecurityGroup
-      Properties:
-        GroupDescription: Permite trafico solo desde NLB
-        VpcId: !Ref VpcId
-        SecurityGroupIngress:
-          - IpProtocol: tcp
-            FromPort: 8080
-            ToPort: 8080
-            CidrIp: 0.0.0.0/0
-
     # ============================================================
     # Network Load Balancer
     # ============================================================
@@ -86,8 +75,6 @@
         Scheme: internal
         Type: network
         Subnets: !Ref PrivateSubnets
-        SecurityGroups:
-        - !Ref NLBSG
 
     AppTargetGroup:
       Type: AWS::ElasticLoadBalancingV2::TargetGroup

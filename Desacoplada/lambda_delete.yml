@@ -1,0 +1,23 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: "Lambda DELETE usando imagen ECR"
+
+Resources:
+  DeleteLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: delete
+      PackageType: Image
+      Code:
+        ImageUri: !Sub "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/inventory-no-acoplated-app:delete"
+      Role: !Sub arn:aws:iam::${AWS::AccountId}:role/LabRole
+      Timeout: 10
+      MemorySize: 128
+      Architectures:
+        - x86_64
+      Environment:
+        Variables:
+          DYNAMO_TABLE: products
+
+Outputs:
+  LambdaName:
+    Value: !Ref DeleteLambda
