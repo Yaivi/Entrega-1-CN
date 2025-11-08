@@ -16,7 +16,7 @@ Resources:
         - x86_64
       Environment:
         Variables:
-          DYNAMO_TABLE: products
+          DYNAMO_TABLE: MiTablaEjemplo
 
 Outputs:
   LambdaName:

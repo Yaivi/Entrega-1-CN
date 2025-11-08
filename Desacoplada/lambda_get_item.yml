@@ -1,0 +1,23 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: "Lambda GET-ITEM usando imagen ECR"
+
+Resources:
+  GetItemLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: get_item
+      PackageType: Image
+      Code:
+        ImageUri: !Sub "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/inventory-no-acoplated-app:get_indv"
+      Role: !Sub arn:aws:iam::${AWS::AccountId}:role/LabRole
+      Timeout: 10
+      MemorySize: 128
+      Architectures:
+        - x86_64
+      Environment:
+        Variables:
+          DYNAMO_TABLE: MiTablaEjemplo
+
+Outputs:
+  LambdaName:
+    Value: !Ref GetIndvLambda

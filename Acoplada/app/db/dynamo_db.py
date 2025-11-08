@@ -1,10 +1,8 @@
-import os
-from typing import Optional, List, Dict, Any
+from typing import Optional, List
 from uuid import uuid4
 import boto3
 from botocore.exceptions import ClientError
 from models.item import Item, ItemCreate
-
 
 class DynamoDBTable:
     def __init__(self, table_name: str, region_name: Optional[str] = None):
@@ -13,16 +11,13 @@ class DynamoDBTable:
         self.table = self.dynamodb.Table(table_name)
 
     def create_item(self, payload: ItemCreate) -> Item:
-        """Crea un item. Si no se pasa id, genera uno automáticamente."""
-        data = payload.dict()
-        if not data.get('id'):
-            data['id'] = str(uuid4())
+        """Crea un item. Usa el id que venga en payload; no genera UUID extra."""
+        data = payload.model_dump()
         item = Item(**data)
-        self.table.put_item(Item=item.dict())
+        self.table.put_item(Item=item.model_dump())
         return item
 
     def get_item(self, item_id: str) -> Optional[Item]:
-        """Obtiene un item por id."""
         try:
             resp = self.table.get_item(Key={'id': item_id})
             it = resp.get('Item')
@@ -33,14 +28,11 @@ class DynamoDBTable:
             raise
 
     def get_all_items(self) -> List[Item]:
-        """Obtiene todos los items (scan completo, cuidado con tablas grandes)."""
         resp = self.table.scan()
-        items = [Item(**it) for it in resp.get('Items', [])]
-        return items
+        return [Item(**it) for it in resp.get('Items', [])]
 
     def update_item(self, item_id: str, payload: ItemCreate) -> Optional[Item]:
-        """Actualiza un item por id. No se puede cambiar el id."""
-        updatables = payload.dict(exclude={'id'})
+        updatables = payload.model_dump(exclude={'id'})
         if not updatables:
             return self.get_item(item_id)
 
@@ -67,7 +59,6 @@ class DynamoDBTable:
             raise
 
     def delete_item(self, item_id: str) -> bool:
-        """Elimina un item por id."""
         try:
             self.table.delete_item(
                 Key={'id': item_id},

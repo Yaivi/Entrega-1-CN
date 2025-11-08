@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 import uuid
 
 class ItemCreate(BaseModel):
+    id: str
     nombre: str = Field(..., min_length=1)
     fecha: Optional[str] = None  # se genera si no se da
     cantidad: int = Field(..., ge=0)
@@ -14,7 +15,7 @@ class ItemCreate(BaseModel):
         return v or datetime.now(timezone.utc).isoformat()
 
 class Item(ItemCreate):
-    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    id: str 
 
     class Config:
         json_schema_extra = {
