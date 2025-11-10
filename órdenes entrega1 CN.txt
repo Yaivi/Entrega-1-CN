@@ -1,0 +1,71 @@
+cd .\Acoplada\
+
+aws cloudformation deploy --template-file ecr.yml --stack-name ecr-stack --region us-east-1
+
+aws cloudformation deploy --template-file dynamodb.yml --stack-name dynamodb-stack --region us-east-1
+
+aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin 590183866673.dkr.ecr.us-east-1.amazonaws.com
+
+docker build -t my-ecr-rep:latest .
+
+docker tag my-ecr-rep:latest 590183866673.dkr.ecr.us-east-1.amazonaws.com/my-ecr-rep:latest
+
+docker push 590183866673.dkr.ecr.us-east-1.amazonaws.com/my-ecr-rep:latest
+
+aws cloudformation deploy --template-file main.yml --stack-name inventory-stack --region us-east-1 --parameter-overrides VpcId=vpc-05037d07a42010764 "PrivateSubnets=subnet-089bef5abb7f8c879,subnet-0a9dc898651db845e" ImageUri=590183866673.dkr.ecr.us-east-1.amazonaws.com/my-ecr-rep:latest
+
+SUBNETS PRIVADAS
+aws cloudformation deploy --template-file main.yml --stack-name inventory-stack --region us-east-1 --parameter-overrides VpcId=vpc-05037d07a42010764 "PrivateSubnets=subnet-0608304913086dc3d,subnet-04af5debaa1d9fefe" ImageUri=590183866673.dkr.ecr.us-east-1.amazonaws.com/my-ecr-rep:latest
+
+====para entrar a la app====
+aws apigateway get-rest-apis --region us-east-1
+(cambiar lo de antes de .execute por el campo id del comando)
+https://3p8xusax35.execute-api.us-east-1.amazonaws.com/prod
+
+
+uyEqU2dPGA1lJtfm9CYdn7MHyqKdvPpF1Pn82CCQ
+
+
+-----SI PIERDO LOS PARAMETROS---
+VPCID:  aws ec2 describe-vpcs --query "Vpcs[*].VpcId" --region us-east-1
+
+ImageUri:  aws ecr describe-repositories --region us-east-1 --query "repositories[*].repositoryUri"
+
+
+SUBNETS:  aws ec2 describe-subnets --filters "Name=vpc-id,Values=vpc-05037d07a42010764" --query "Subnets[*].SubnetId" --region us-east-1
+
+
+----------------------------------------------------------------------------------------------
+
+--------------------VERSIÓN DESACOPLADA----------------
+aws cloudformation deploy --template-file ecr.yml --stack-name ecr-desacoplado-stack --region us-east-1
+
+aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin 590183866673.dkr.ecr.us-east-1.amazonaws.com
+
+docker build --platform linux/amd64 -t my-ecr-desacoplado:create -f lambdas/create/Dockerfile .
+docker tag my-ecr-desacoplado:create 590183866673.dkr.ecr.us-east-1.amazonaws.com/my-ecr-desacoplado:create
+docker push 590183866673.dkr.ecr.us-east-1.amazonaws.com/my-ecr-desacoplado:create
+
+docker build --platform linux/amd64 -t my-ecr-desacoplado:delete -f lambdas/delete/Dockerfile .
+docker tag my-ecr-desacoplado:delete 590183866673.dkr.ecr.us-east-1.amazonaws.com/my-ecr-desacoplado:delete
+docker push 590183866673.dkr.ecr.us-east-1.amazonaws.com/my-ecr-desacoplado:delete
+
+docker build --platform linux/amd64 -t my-ecr-desacoplado:get -f lambdas/get_item/Dockerfile .
+docker tag my-ecr-desacoplado:get 590183866673.dkr.ecr.us-east-1.amazonaws.com/my-ecr-desacoplado:get
+docker push 590183866673.dkr.ecr.us-east-1.amazonaws.com/my-ecr-desacoplado:get
+
+docker build --platform linux/amd64 -t my-ecr-desacoplado:list -f lambdas/get_items/Dockerfile .
+docker tag my-ecr-desacoplado:list 590183866673.dkr.ecr.us-east-1.amazonaws.com/my-ecr-desacoplado:list
+docker push 590183866673.dkr.ecr.us-east-1.amazonaws.com/my-ecr-desacoplado:list
+
+docker build --platform linux/amd64 -t my-ecr-desacoplado:update -f lambdas/update/Dockerfile .
+docker tag my-ecr-desacoplado:update 590183866673.dkr.ecr.us-east-1.amazonaws.com/my-ecr-desacoplado:update
+docker push 590183866673.dkr.ecr.us-east-1.amazonaws.com/my-ecr-desacoplado:update
+
+aws cloudformation deploy --template-file lambda_post.yml --stack-name lambda-post-stack --capabilities CAPABILITY_NAMED_IAM --region us-east-1
+aws cloudformation deploy --template-file lambda_delete.yml --stack-name lambda-delete-stack --capabilities CAPABILITY_NAMED_IAM --region us-east-1
+aws cloudformation deploy --template-file lambda_get_item.yml --stack-name lambda-get-stack --capabilities CAPABILITY_NAMED_IAM --region us-east-1
+aws cloudformation deploy --template-file lambda_get_items.yml --stack-name lambda-list-stack --capabilities CAPABILITY_NAMED_IAM --region us-east-1
+aws cloudformation deploy --template-file lambda_update.yml --stack-name lambda-update-stack --capabilities CAPABILITY_NAMED_IAM --region us-east-1
+
+aws cloudformation deploy --template-file main.yml --stack-name inventory-stack-desacoplado --region us-east-1
