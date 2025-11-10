@@ -5,10 +5,10 @@ Resources:
   UpdateLambda:
     Type: AWS::Lambda::Function
     Properties:
-      FunctionName: update_item
+      FunctionName: update
       PackageType: Image
       Code:
-        ImageUri: !Sub "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/inventory-no-acoplated-app:update"
+        ImageUri: !Sub "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/my-ecr-desacoplado:update"
       Role: !Sub arn:aws:iam::${AWS::AccountId}:role/LabRole
       Timeout: 10
       MemorySize: 128

@@ -201,7 +201,7 @@
               method.response.header.Access-Control-Allow-Methods: true
 
     ItemResource:
-      Type: AWS::ApiGateway::Resource
+      Type: AWS::ApiGateway::Resource   
       Properties:
         RestApiId: !Ref ApiGatewayRestApi
         ParentId: !Ref ItemsResource

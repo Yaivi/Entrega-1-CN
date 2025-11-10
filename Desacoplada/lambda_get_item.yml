@@ -5,10 +5,10 @@ Resources:
   GetItemLambda:
     Type: AWS::Lambda::Function
     Properties:
-      FunctionName: get_item
+      FunctionName: get
       PackageType: Image
       Code:
-        ImageUri: !Sub "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/inventory-no-acoplated-app:get_indv"
+        ImageUri: !Sub "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/my-ecr-desacoplado:get"
       Role: !Sub arn:aws:iam::${AWS::AccountId}:role/LabRole
       Timeout: 10
       MemorySize: 128
@@ -20,4 +20,4 @@ Resources:
 
 Outputs:
   LambdaName:
-    Value: !Ref GetIndvLambda
+    Value: !Ref GetItemLambda

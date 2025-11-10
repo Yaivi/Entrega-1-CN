@@ -8,7 +8,10 @@ Parameters:
     Description: Nombre de la tabla DynamoDB que usará la aplicación
 
 Resources:
+
+  # ============================================================
   # API Gateway
+  # ============================================================
   ApiGatewayRestApi:
     Type: AWS::ApiGateway::RestApi
     Properties:
@@ -16,7 +19,7 @@ Resources:
       Description: API CRUD con integración Lambda Proxy
       EndpointConfiguration:
         Types: [REGIONAL]
-  
+
   # /items
   ItemsResource:
     Type: AWS::ApiGateway::Resource
@@ -36,7 +39,7 @@ Resources:
       Integration:
         Type: AWS_PROXY
         IntegrationHttpMethod: POST
-        Uri: !Sub arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:create_item/invocations
+        Uri: !Sub arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:create/invocations
 
   # GET /items
   ItemsGetMethod:
@@ -49,7 +52,7 @@ Resources:
       Integration:
         Type: AWS_PROXY
         IntegrationHttpMethod: POST
-        Uri: !Sub arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:list_items/invocations
+        Uri: !Sub arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:list/invocations
 
   # CORS OPTIONS
   ItemsOptionsMethod:
@@ -97,7 +100,7 @@ Resources:
       Integration:
         Type: AWS_PROXY
         IntegrationHttpMethod: POST
-        Uri: !Sub arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:get_item/invocations
+        Uri: !Sub arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:get/invocations
 
   # PUT /items/{id}
   ItemPutMethod:
@@ -112,7 +115,7 @@ Resources:
       Integration:
         Type: AWS_PROXY
         IntegrationHttpMethod: POST
-        Uri: !Sub arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:update_item/invocations
+        Uri: !Sub arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:update/invocations
 
   # DELETE /items/{id}
   ItemDeleteMethod:
@@ -129,44 +132,47 @@ Resources:
         IntegrationHttpMethod: POST
         Uri: !Sub arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:delete/invocations
 
-  
-  # Permisos para que el API Gateway pueda invocar las Lambdas
+  # ============================================================
+  # Permisos para Lambda
+  # ============================================================
   CreatePermission:
     Type: AWS::Lambda::Permission
     Properties:
       Action: lambda:InvokeFunction
-      FunctionName: !Sub arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:create_item
-      Principal: apigateway.amazonaws.com
-
-  ListPermission:
-    Type: AWS::Lambda::Permission
-    Properties:
-      Action: lambda:InvokeFunction
-      FunctionName: !Sub arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:list_items
-      Principal: apigateway.amazonaws.com
-
-  GetPermission:
-    Type: AWS::Lambda::Permission
-    Properties:
-      Action: lambda:InvokeFunction
-      FunctionName: !Sub arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:get_item
-      Principal: apigateway.amazonaws.com
-
-  UpdatePermission:
-    Type: AWS::Lambda::Permission
-    Properties:
-      Action: lambda:InvokeFunction
-      FunctionName: !Sub arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:update_item
+      FunctionName: create
       Principal: apigateway.amazonaws.com
 
   DeletePermission:
     Type: AWS::Lambda::Permission
     Properties:
       Action: lambda:InvokeFunction
-      FunctionName: !Sub arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:delete
+      FunctionName: delete
       Principal: apigateway.amazonaws.com
 
+  ListPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: list
+      Principal: apigateway.amazonaws.com
+
+  GetPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: get
+      Principal: apigateway.amazonaws.com
+
+  UpdatePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: update
+      Principal: apigateway.amazonaws.com
+
+  # ============================================================
   # Deployment y Stage
+  # ============================================================
   ApiDeployment:
     Type: AWS::ApiGateway::Deployment
     DependsOn:

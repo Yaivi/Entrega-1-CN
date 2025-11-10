@@ -2,9 +2,12 @@ FROM public.ecr.aws/lambda/python:3.11
 
 WORKDIR ${LAMBDA_TASK_ROOT}
 
-COPY app.py .
-COPY ../../app/requirements.txt .
+COPY requirements.txt .
+COPY app/ ./app/
+
+# Copiamos el código de esta función
+COPY lambdas/create ./
 
 RUN pip install --no-cache-dir -r requirements.txt --target .
 
-CMD ["app.lambda_handler"]  
+CMD ["app.handler"]

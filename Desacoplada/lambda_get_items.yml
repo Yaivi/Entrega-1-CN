@@ -5,10 +5,10 @@ Resources:
   GetItemsLambda:
     Type: AWS::Lambda::Function
     Properties:
-      FunctionName: list_items
+      FunctionName: list
       PackageType: Image
       Code:
-        ImageUri: !Sub "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/inventory-no-acoplated-app:get_group"
+        ImageUri: !Sub "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/my-ecr-desacoplado:list"
       Role: !Sub arn:aws:iam::${AWS::AccountId}:role/LabRole
       Timeout: 10
       MemorySize: 128

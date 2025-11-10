@@ -8,7 +8,7 @@ Resources:
       FunctionName: delete
       PackageType: Image
       Code:
-        ImageUri: !Sub "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/inventory-no-acoplated-app:delete"
+        ImageUri: !Sub "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/my-ecr-desacoplado:delete"
       Role: !Sub arn:aws:iam::${AWS::AccountId}:role/LabRole
       Timeout: 10
       MemorySize: 128

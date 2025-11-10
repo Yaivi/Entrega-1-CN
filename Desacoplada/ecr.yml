@@ -4,18 +4,17 @@ Description: Repositorio ECR para la aplicación CRUD con ECS y DynamoDB
 Parameters:
   RepositoryName:
     Type: String
-    Default: my-ecr-rep
+    Default: my-ecr-desacoplado
     Description: Nombre del repositorio ECR
 
 Resources:
-  # Repositorio ECR principal
   MyAppECRRepositoryDesacoplado:
     Type: AWS::ECR::Repository
     Properties:
-      RepositoryName: !Ref RepositoryName  # Opcional: puedes dejar que AWS genere el nombre
+      RepositoryName: !Ref RepositoryName
       ImageScanningConfiguration:
-        ScanOnPush: false                   # Activa escaneo de vulnerabilidades cada vez que subes una imagen
-      LifecyclePolicy:                     # Limpieza automática de imágenes antiguas
+        ScanOnPush: false
+      LifecyclePolicy:
         LifecyclePolicyText: |
           {
             "rules": [
@@ -35,12 +34,12 @@ Resources:
 Outputs:
   RepositoryUri:
     Description: URI del repositorio ECR (para usar en ECS Task Definition)
-    Value: !GetAtt MyAppECRRepository.RepositoryUri
+    Value: !GetAtt MyAppECRRepositoryDesacoplado.RepositoryUri
 
   RepositoryName:
     Description: Nombre del repositorio
-    Value: !Ref MyAppECRRepository
+    Value: !Ref MyAppECRRepositoryDesacoplado
   
   RepositoryArn:
     Description: Identificador único de Repositorio
-    Value: !GetAtt MyAppECRRepository.Arn
+    Value: !GetAtt MyAppECRRepositoryDesacoplado.Arn

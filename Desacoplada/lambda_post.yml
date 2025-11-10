@@ -5,10 +5,10 @@ Resources:
   PostLambda:
     Type: AWS::Lambda::Function
     Properties:
-      FunctionName: create_item
+      FunctionName: create
       PackageType: Image
       Code:
-        ImageUri: !Sub "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/inventory-no-acoplated-app:post"
+        ImageUri: !Sub "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/my-ecr-desacoplado:create"
       Role: !Sub arn:aws:iam::${AWS::AccountId}:role/LabRole
       Timeout: 10
       MemorySize: 128
